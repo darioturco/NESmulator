@@ -9,3 +9,6 @@ target/
 *.eclipse
 
 *.log
+
+roms/
+.claude/
