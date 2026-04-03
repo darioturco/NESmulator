@@ -69,3 +69,8 @@ java -jar target/nes-emulator.jar path/to/rom.nes
 ## Testing the CPU
 
 Use the `nestest.nes` ROM and compare the output log against the official `nestest.log` for cycle-accurate validation.
+
+## References
+
+- [NESDev Wiki](https://www.nesdev.org/wiki/Nesdev_Wiki) — primary reference for NES hardware documentation, used throughout this project
+- [javidx9 — NES Emulator series](https://www.youtube.com/watch?v=F8kx56OZQhg&list=PLrOv9FMX8xJHqMvSGB_9G9nZZ_4IgteYf&index=2) — excellent video series on building a NES emulator from scratch

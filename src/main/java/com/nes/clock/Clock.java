@@ -1,4 +1,4 @@
-package com.nes;
+package com.nes.clock;
 
 /**
  * Controls emulation timing, keeping the main loop running at a stable 60 FPS.
