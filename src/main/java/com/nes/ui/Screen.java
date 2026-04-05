@@ -22,9 +22,18 @@ public class Screen extends JPanel {
     private final BufferedImage image =
             new BufferedImage(NES_W, NES_H, BufferedImage.TYPE_INT_ARGB);
 
-    private volatile int  controllerState = 0;
-    private volatile long masterClock     = 0;
-    private volatile long frameCount      = 0;
+    private volatile int  controllerState  = 0;
+    private volatile long masterClock      = 0;
+    private volatile long frameCount       = 0;
+    private volatile boolean showTickCounter = false;
+
+    // FPS tracking — frames counted within the current real second
+    private long fpsWindowStart  = 0;
+    private int  fpsFrameCount   = 0;
+    private volatile int measuredFps = 0;
+
+    // Elapsed time
+    private final long startNanos = System.nanoTime();
 
     public Screen(int scale) {
         this.scale    = Math.max(1, scale);
@@ -40,6 +49,16 @@ public class Screen extends JPanel {
 
     public void updateFrame(int[] argbPixels) {
         image.setRGB(0, 0, NES_W, NES_H, argbPixels, 0, NES_W);
+
+        long now = System.nanoTime();
+        if (fpsWindowStart == 0) fpsWindowStart = now;
+        fpsFrameCount++;
+        if (now - fpsWindowStart >= 1_000_000_000L) {
+            measuredFps    = fpsFrameCount;
+            fpsFrameCount  = 0;
+            fpsWindowStart = now;
+        }
+
         repaint();
     }
 
@@ -51,6 +70,11 @@ public class Screen extends JPanel {
     public void updateClock(long ticks, long frames) {
         masterClock = ticks;
         frameCount  = frames;
+        repaint();
+    }
+
+    public void setShowTickCounter(boolean show) {
+        showTickCounter = show;
         repaint();
     }
 
@@ -161,37 +185,70 @@ public class Screen extends JPanel {
         drawCentred(g2, "Z", cx - unit, abY + brad + unit * 2 / 3);
         drawCentred(g2, "X", cx + unit, abY + brad + unit * 2 / 3);
 
-        // ── Counters (CLK left, FRM right) ────────────────────
-        int counterY = y + h - unit * 2;
-        int halfW    = (w - unit) / 2;
-        int lx       = x + unit / 2;          // left box X
-        int rx       = lx + halfW + unit / 4; // right box X
-
-        // Background boxes
-        g2.setColor(new Color(50, 50, 50));
-        g2.fillRoundRect(lx, counterY - unit / 2, halfW, unit * 2, unit / 3, unit / 3);
-        g2.fillRoundRect(rx, counterY - unit / 2, halfW, unit * 2, unit / 3, unit / 3);
+        // ── Counters ───────────────────────────────────────────
+        int margin  = unit / 2;
+        int fullW   = w - margin * 2;
+        int halfW   = (fullW - unit / 4) / 2;
+        int lx      = x + margin;
+        int rx      = lx + halfW + unit / 4;
+        int boxH    = unit * 2;
+        int radius  = unit / 3;
 
         int labelSz = Math.max(7, unit * 2 / 3);
         int valueSz = Math.max(6, unit / 2);
-        int lcx     = lx + halfW / 2;  // centre of left box
-        int rcx     = rx + halfW / 2;  // centre of right box
 
-        // CLK label + value
-        g2.setColor(new Color(80, 220, 120));
+        // Row 1 (second from bottom): FPS (left) + FRM (right)  [or CLK+FRM if showTickCounter]
+        int row1Y = y + h - unit / 2 - boxH;
+        // Row 2 (bottom): TIME full width
+        int row2Y = row1Y - boxH - unit / 3;
+
+        // ── TIME box (full width) ──────────────────────────────
+        g2.setColor(new Color(50, 50, 50));
+        g2.fillRoundRect(lx, row2Y, fullW, boxH, radius, radius);
+
+        long elapsedSecs = (System.nanoTime() - startNanos) / 1_000_000_000L;
+        String timeStr = String.format("%02d:%02d", elapsedSecs / 60, elapsedSecs % 60);
+        int timeCx = x + w / 2;
+        g2.setColor(new Color(255, 200, 80));
         g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
-        drawCentred(g2, "CLK", lcx, counterY + unit / 4);
-        g2.setColor(new Color(180, 255, 180));
+        drawCentred(g2, "TIME", timeCx, row2Y + boxH / 2 - labelSz / 4);
+        g2.setColor(new Color(255, 235, 160));
         g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
-        drawCentred(g2, formatClock(masterClock), lcx, counterY + unit);
+        drawCentred(g2, timeStr, timeCx, row2Y + boxH - valueSz / 2);
 
-        // FRM label + value
+        // ── FPS / FRM (or CLK / FRM) boxes ────────────────────
+        g2.setColor(new Color(50, 50, 50));
+        g2.fillRoundRect(lx, row1Y, halfW, boxH, radius, radius);
+        g2.fillRoundRect(rx, row1Y, halfW, boxH, radius, radius);
+
+        int lcx = lx + halfW / 2;
+        int rcx = rx + halfW / 2;
+
+        if (showTickCounter) {
+            // Left: CLK
+            g2.setColor(new Color(80, 220, 120));
+            g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
+            drawCentred(g2, "CLK", lcx, row1Y + boxH / 2 - labelSz / 4);
+            g2.setColor(new Color(180, 255, 180));
+            g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
+            drawCentred(g2, formatClock(masterClock), lcx, row1Y + boxH - valueSz / 2);
+        } else {
+            // Left: FPS
+            g2.setColor(new Color(180, 120, 255));
+            g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
+            drawCentred(g2, "FPS", lcx, row1Y + boxH / 2 - labelSz / 4);
+            g2.setColor(new Color(220, 190, 255));
+            g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
+            drawCentred(g2, String.valueOf(measuredFps), lcx, row1Y + boxH - valueSz / 2);
+        }
+
+        // Right: FRM
         g2.setColor(new Color(100, 180, 255));
         g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
-        drawCentred(g2, "FRM", rcx, counterY + unit / 4);
+        drawCentred(g2, "FRM", rcx, row1Y + boxH / 2 - labelSz / 4);
         g2.setColor(new Color(200, 230, 255));
         g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
-        drawCentred(g2, formatClock(frameCount), rcx, counterY + unit);
+        drawCentred(g2, formatClock(frameCount), rcx, row1Y + boxH - valueSz / 2);
     }
 
     private static String formatClock(long ticks) {
@@ -199,8 +256,6 @@ public class Screen extends JPanel {
             return String.format("%.2fB", ticks / 1_000_000_000.0);
         } else if (ticks >= 1_000_000L) {
             return String.format("%.2fM", ticks / 1_000_000.0);
-        } else if (ticks >= 1_000L) {
-            return String.format("%.1fK", ticks / 1_000.0);
         } else {
             return String.valueOf(ticks);
         }

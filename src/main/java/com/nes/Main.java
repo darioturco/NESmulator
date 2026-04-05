@@ -1,5 +1,6 @@
 package com.nes;
 
+import com.nes.clock.Clock;
 import com.nes.memory.Cartridge;
 import com.nes.memory.Controller;
 import com.nes.ui.Screen;
@@ -72,12 +73,25 @@ public class Main {
                 }
             });
 
-            // 60 FPS game loop
-            new Timer(1000 / 60, e -> {
-                nes.stepFrame();
-                screen.updateFrame(nes.getFrameBuffer());
-                screen.updateClock(nes.getMasterClock(), nes.getFrameCount());
-            }).start();
+            // 60 FPS game loop on a dedicated thread to avoid blocking the EDT
+            Clock clock = new Clock();
+            clock.reset();
+
+            Thread gameLoop = new Thread(() -> {
+                while (!Thread.currentThread().isInterrupted()) {
+                    nes.stepFrame();
+                    int[] frameBuffer = nes.getFrameBuffer();
+                    long masterClock = nes.getMasterClock();
+                    long frameCount = nes.getFrameCount();
+                    SwingUtilities.invokeLater(() -> {
+                        screen.updateFrame(frameBuffer);
+                        screen.updateClock(masterClock, frameCount);
+                    });
+                    clock.sync();
+                }
+            }, "nes-game-loop");
+            gameLoop.setDaemon(true);
+            gameLoop.start();
         });
     }
 }
