@@ -76,7 +76,7 @@ public class Main {
             new Timer(1000 / 60, e -> {
                 nes.stepFrame();
                 screen.updateFrame(nes.getFrameBuffer());
-                screen.updateClock(nes.getMasterClock());
+                screen.updateClock(nes.getMasterClock(), nes.getFrameCount());
             }).start();
         });
     }

@@ -24,6 +24,7 @@ public class Screen extends JPanel {
 
     private volatile int  controllerState = 0;
     private volatile long masterClock     = 0;
+    private volatile long frameCount      = 0;
 
     public Screen(int scale) {
         this.scale    = Math.max(1, scale);
@@ -47,8 +48,9 @@ public class Screen extends JPanel {
         repaint();
     }
 
-    public void updateClock(long ticks) {
+    public void updateClock(long ticks, long frames) {
         masterClock = ticks;
+        frameCount  = frames;
         repaint();
     }
 
@@ -159,21 +161,37 @@ public class Screen extends JPanel {
         drawCentred(g2, "Z", cx - unit, abY + brad + unit * 2 / 3);
         drawCentred(g2, "X", cx + unit, abY + brad + unit * 2 / 3);
 
-        // ── Clock counter ──────────────────────────────────────
-        int clockY = y + h - unit * 2;
+        // ── Counters (CLK left, FRM right) ────────────────────
+        int counterY = y + h - unit * 2;
+        int halfW    = (w - unit) / 2;
+        int lx       = x + unit / 2;          // left box X
+        int rx       = lx + halfW + unit / 4; // right box X
+
+        // Background boxes
         g2.setColor(new Color(50, 50, 50));
-        g2.fillRoundRect(x + unit / 2, clockY - unit / 2,
-                         w - unit, unit * 2, unit / 2, unit / 2);
+        g2.fillRoundRect(lx, counterY - unit / 2, halfW, unit * 2, unit / 3, unit / 3);
+        g2.fillRoundRect(rx, counterY - unit / 2, halfW, unit * 2, unit / 3, unit / 3);
 
+        int labelSz = Math.max(7, unit * 2 / 3);
+        int valueSz = Math.max(6, unit / 2);
+        int lcx     = lx + halfW / 2;  // centre of left box
+        int rcx     = rx + halfW / 2;  // centre of right box
+
+        // CLK label + value
         g2.setColor(new Color(80, 220, 120));
-        g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(7, unit * 2 / 3)));
-        drawCentred(g2, "CLK", cx, clockY + unit / 4);
-
+        g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
+        drawCentred(g2, "CLK", lcx, counterY + unit / 4);
         g2.setColor(new Color(180, 255, 180));
-        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.max(6, unit / 2)));
-        // Format: show value in millions (M) if large enough, else raw
-        String clockStr = formatClock(masterClock);
-        drawCentred(g2, clockStr, cx, clockY + unit);
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
+        drawCentred(g2, formatClock(masterClock), lcx, counterY + unit);
+
+        // FRM label + value
+        g2.setColor(new Color(100, 180, 255));
+        g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, labelSz));
+        drawCentred(g2, "FRM", rcx, counterY + unit / 4);
+        g2.setColor(new Color(200, 230, 255));
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, valueSz));
+        drawCentred(g2, formatClock(frameCount), rcx, counterY + unit);
     }
 
     private static String formatClock(long ticks) {

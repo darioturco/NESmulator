@@ -16,11 +16,20 @@ import com.nes.memory.Cartridge;
  * Background rendering uses the "Loopy" internal registers (v, t, x, w) and
  * 16-bit shift registers to produce one pixel per cycle on visible scanlines.
  *
+ * Sprite rendering evaluates OAM at cycle 257 of each scanline (pipeline model:
+ * sprites evaluated on scanline N are displayed on scanline N+1). Supports
+ * 8×8 and 8×16 modes, horizontal/vertical flipping, palette, and priority.
+ *
  * Scanline timing:
  *   0–239   Visible
  *   240     Post-render (idle)
  *   241–260 Vertical blank  (NMI fires at scanline 241, cycle 1)
- *   261     Pre-render      (scroll registers reloaded)
+ *   261     Pre-render      (scroll registers reloaded; sprites for scanline 0 fetched)
+ *
+ * Bug fixes applied vs. original:
+ *   – Left-column clipping: PPUMASK bits 1/2 now suppress BG/sprite in px 0–7
+ *   – Sprite 0 hit: correctly suppressed in clipped columns and at x=255
+ *   – Unused secondary-OAM slots zeroed so stale data cannot bleed into rendering
  */
 public class PPU {
 
@@ -40,7 +49,7 @@ public class PPU {
 
     private final PPUBus ppuBus = new PPUBus();
 
-    // Object Attribute Memory (64 sprites × 4 bytes each)
+    // Primary OAM (64 sprites × 4 bytes)
     private final byte[] oam = new byte[256];
 
     // -------------------------------------------------------------------------
@@ -96,6 +105,33 @@ public class PPU {
     private int bgNextTileHi;   // pattern plane-1 byte
 
     // -------------------------------------------------------------------------
+    // Sprite pipeline
+    //
+    // At cycle 257 of each rendering scanline the PPU evaluates OAM to find
+    // up to 8 sprites that intersect scanline+1, then pre-fetches their
+    // pattern bytes.  The results are consumed during scanline+1's pixel output.
+    // -------------------------------------------------------------------------
+
+    /** Secondary OAM: Y, tile, attributes, X for up to 8 selected sprites. */
+    private final int[] sprY    = new int[8];
+    private final int[] sprTile = new int[8];
+    private final int[] sprAttr = new int[8];
+    private final int[] sprX    = new int[8];
+
+    /** Pre-fetched pattern bytes for the selected sprites (horizontal flip already applied). */
+    private final int[] sprPatLo = new int[8];
+    private final int[] sprPatHi = new int[8];
+
+    /** Number of sprites selected for the next scanline (0–8). */
+    private int sprCount;
+
+    /**
+     * True when OAM sprite 0 was placed in secondary OAM slot 0 during the
+     * last evaluation.  Used to trigger sprite-0 hit detection.
+     */
+    private boolean sprite0Loaded;
+
+    // -------------------------------------------------------------------------
     // NMI callback
     // -------------------------------------------------------------------------
 
@@ -117,6 +153,11 @@ public class PPU {
         bgShiftAttrLo = 0; bgShiftAttrHi = 0;
         bgNextTileId  = 0; bgNextTileAttr = 0;
         bgNextTileLo  = 0; bgNextTileHi   = 0;
+        sprCount      = 0; sprite0Loaded  = false;
+        for (int i = 0; i < 8; i++) {
+            sprY[i] = sprTile[i] = sprAttr[i] = sprX[i] = 0;
+            sprPatLo[i] = sprPatHi[i] = 0;
+        }
         frameComplete = false;
     }
 
@@ -147,7 +188,7 @@ public class PPU {
      *   Cycle  0        : idle
      *   Cycles  1– 256  : pixel output + 8-cycle background fetch groups
      *   Cycle  256      : increment coarse Y
-     *   Cycle  257      : copy X from t → v ; load shift registers
+     *   Cycle  257      : copy X from t → v ; sprite evaluation + fetch for next scanline
      *   Cycles 280–304  : (pre-render only) copy Y from t → v
      *   Cycles 321–336  : pre-fetch first two tiles of the next scanline
      *   Cycles 337–340  : dummy nametable fetches
@@ -178,6 +219,10 @@ public class PPU {
             if (cycle == 257) {
                 loadShifters();
                 if (rendering) copyX();
+                // Sprite pipeline: evaluate OAM and fetch patterns for the
+                // next scanline.  Pre-render (261) evaluates for scanline 0.
+                evaluateSprites();
+                fetchSprites();
             }
 
             // Dummy nametable fetches at end of scanline
@@ -197,7 +242,7 @@ public class PPU {
         }
 
         // -----------------------------------------------------------------
-        // Pre-render: clear status flags
+        // Pre-render: clear VBlank, sprite-0 hit, and sprite-overflow flags
         // -----------------------------------------------------------------
         if (scanline == 261 && cycle == 1) status &= ~0xE0;
 
@@ -238,7 +283,7 @@ public class PPU {
             case 7: { // PPUDATA — one-cycle read delay (palette is immediate)
                 int data = dataBuffer;
                 dataBuffer = ppuBus.read(v);
-                if ((v & 0x3FFF) >= 0x3F00) data = dataBuffer;
+                if ((v & 0x3FFF) >= 0x3F00) data = dataBuffer; // palette: no delay
                 v = (v + ((ctrl & 0x04) != 0 ? 32 : 1)) & 0x7FFF;
                 return data & 0xFF;
             }
@@ -298,17 +343,10 @@ public class PPU {
         }
     }
 
-    /** OAM DMA — CPU writes 256 bytes directly into OAM ($4014). */
+    /** OAM DMA — CPU copies 256 bytes directly into OAM ($4014). */
     public void writeDma(byte[] page) {
         for (int i = 0; i < 256; i++) oam[(oamAddr + i) & 0xFF] = page[i];
     }
-
-    // =========================================================================
-    // Internal VRAM access
-    // =========================================================================
-
-    private int  readVram(int addr)          { return ppuBus.read(addr); }
-    private void writeVram(int addr, int d)  { ppuBus.write(addr, d); }
 
     // =========================================================================
     // Background pipeline helpers
@@ -406,24 +444,139 @@ public class PPU {
         v = (v & ~0x7BE0) | (t & 0x7BE0);
     }
 
+    // =========================================================================
+    // Sprite pipeline helpers
+    // =========================================================================
+
     /**
-     * Produce one background pixel at (cycle−1, scanline) and write it
-     * to the frame buffer.
+     * Scan all 64 OAM entries and fill secondary OAM with up to 8 sprites
+     * that intersect the next scanline.
+     *
+     * The "next scanline" is {@code scanline + 1}, with pre-render (261)
+     * wrapping to 0 so that scanline-0 sprites are prepared during pre-render.
+     */
+    private void evaluateSprites() {
+        int nextLine    = (scanline == 261) ? 0 : scanline + 1;
+        int spriteSize  = ((ctrl & 0x20) != 0) ? 16 : 8;
+        sprCount        = 0;
+        sprite0Loaded   = false;
+
+        for (int i = 0; i < 64; i++) {
+            int y    = oam[i * 4] & 0xFF;
+            int diff = nextLine - y;
+            if (diff < 0 || diff >= spriteSize) continue;
+
+            if (sprCount < 8) {
+                if (i == 0) sprite0Loaded = true;
+                sprY   [sprCount] = y;
+                sprTile[sprCount] = oam[i * 4 + 1] & 0xFF;
+                sprAttr[sprCount] = oam[i * 4 + 2] & 0xFF;
+                sprX   [sprCount] = oam[i * 4 + 3] & 0xFF;
+                sprCount++;
+            } else {
+                status |= 0x20; // sprite overflow (bit 5 of PPUSTATUS)
+                break;
+            }
+        }
+
+        // Clear unused slots so stale data cannot bleed into rendering
+        for (int i = sprCount; i < 8; i++) {
+            sprY[i] = sprTile[i] = sprAttr[i] = 0xFF;
+            sprX[i] = 0xFF;
+        }
+    }
+
+    /**
+     * Fetch the 8-bit pattern planes for each sprite in secondary OAM.
+     * Horizontal flip is applied here so that rendering can read patterns
+     * MSB-first without knowing the flip state.
+     */
+    private void fetchSprites() {
+        int nextLine   = (scanline == 261) ? 0 : scanline + 1;
+        int spriteSize = ((ctrl & 0x20) != 0) ? 16 : 8;
+
+        for (int i = 0; i < sprCount; i++) {
+            int row      = nextLine - sprY[i];        // row within the sprite (0–7 or 0–15)
+            boolean flipV = (sprAttr[i] & 0x80) != 0;
+            boolean flipH = (sprAttr[i] & 0x40) != 0;
+
+            int tileAddr;
+            if (spriteSize == 8) {
+                // 8×8: pattern table selected by PPUCTRL bit 3
+                int base = ((ctrl & 0x08) != 0) ? 0x1000 : 0x0000;
+                if (flipV) row = 7 - row;
+                tileAddr = base + sprTile[i] * 16 + row;
+            } else {
+                // 8×16: bit 0 of tile index selects pattern table; bits 7–1 give tile
+                int base = (sprTile[i] & 0x01) != 0 ? 0x1000 : 0x0000;
+                int tile = sprTile[i] & 0xFE;
+                if (flipV) row = 15 - row;
+                if (row >= 8) { tile++; row -= 8; } // second half of tall sprite
+                tileAddr = base + tile * 16 + row;
+            }
+
+            int lo = ppuBus.read(tileAddr);
+            int hi = ppuBus.read(tileAddr + 8);
+
+            if (flipH) {
+                lo = reverseBits(lo);
+                hi = reverseBits(hi);
+            }
+
+            sprPatLo[i] = lo;
+            sprPatHi[i] = hi;
+        }
+
+        // Zero unused slots — transparent pixels, no rendering effect
+        for (int i = sprCount; i < 8; i++) {
+            sprPatLo[i] = 0;
+            sprPatHi[i] = 0;
+        }
+    }
+
+    /** Reverse the 8 bits of a byte (used for horizontal sprite flip). */
+    private static int reverseBits(int b) {
+        b = ((b & 0xF0) >> 4) | ((b & 0x0F) << 4);
+        b = ((b & 0xCC) >> 2) | ((b & 0x33) << 2);
+        b = ((b & 0xAA) >> 1) | ((b & 0x55) << 1);
+        return b & 0xFF;
+    }
+
+    // =========================================================================
+    // Pixel output
+    // =========================================================================
+
+    /**
+     * Produce one pixel at (cycle−1, scanline) and write it to the frame buffer.
+     *
+     * Priority rules:
+     *   1. If both BG and sprite pixels are transparent → backdrop colour ($3F00)
+     *   2. If only sprite is visible                   → sprite pixel
+     *   3. If only BG is visible                       → BG pixel
+     *   4. Both visible: sprite attribute bit 5 decides
+     *        0 = sprite in front of BG
+     *        1 = sprite behind BG (BG pixel shown, but sprite-0 hit still fires)
      */
     private void renderPixel() {
         int px = cycle - 1;
         int py = scanline;
 
         if (colorTest != 0) {
-            int color = colorTest == 1 ? 0xFFFF0000 : colorTest == 2 ? 0xFF00FF00 : 0xFF0000FF;
+            int color = colorTest == 1 ? 0xFFFF0000
+                      : colorTest == 2 ? 0xFF00FF00
+                      :                  0xFF0000FF;
             frameBuffer[py * SCREEN_WIDTH + px] = color;
             return;
         }
 
-        int bgPixel = 0, bgPalette = 0;
+        // ---- Background ------------------------------------------------
+        // PPUMASK bit 1 (0x02): show BG in leftmost 8 pixels
+        boolean bgEnabled = (mask & 0x08) != 0
+                         && (px >= 8 || (mask & 0x02) != 0);
 
-        if ((mask & 0x08) != 0) {
-            int mux = 0x8000 >> x;                              // fine-X selector bit
+        int bgPixel = 0, bgPalette = 0;
+        if (bgEnabled) {
+            int mux = 0x8000 >> x;                          // fine-X selector bit
             int p0  = (bgShiftPatLo  & mux) != 0 ? 1 : 0;
             int p1  = (bgShiftPatHi  & mux) != 0 ? 1 : 0;
             bgPixel   = (p1 << 1) | p0;
@@ -432,9 +585,68 @@ public class PPU {
             bgPalette = (a1 << 1) | a0;
         }
 
+        // ---- Sprites ---------------------------------------------------
+        // PPUMASK bit 2 (0x04): show sprites in leftmost 8 pixels
+        boolean sprEnabled = (mask & 0x10) != 0
+                          && (px >= 8 || (mask & 0x04) != 0);
+
+        int  sprPixel    = 0;
+        int  sprPalette  = 0;
+        boolean sprBehindBg = false;
+
+        if (sprEnabled) {
+            for (int i = 0; i < sprCount; i++) {
+                int offset = px - sprX[i]; // pixel offset within this sprite (0–7)
+                if (offset < 0 || offset > 7) continue;
+
+                // Patterns were pre-flipped horizontally; read MSB-first
+                int bit = 7 - offset;
+                int p0  = (sprPatLo[i] >> bit) & 1;
+                int p1  = (sprPatHi[i] >> bit) & 1;
+                int pixel = (p1 << 1) | p0;
+                if (pixel == 0) continue; // transparent
+
+                // Sprite-0 hit: fires when OAM sprite 0 and a BG pixel overlap.
+                // Conditions per NESDev:
+                //   – Both BG and sprite rendering must be enabled (already checked)
+                //   – Neither pixel may be clipped (px < 8 with clip enabled)
+                //   – Not at x = 255
+                //   – bgPixel must also be non-zero
+                if (i == 0 && sprite0Loaded && bgPixel != 0 && px != 255) {
+                    boolean bgCol0Ok  = px >= 8 || (mask & 0x02) != 0;
+                    boolean sprCol0Ok = px >= 8 || (mask & 0x04) != 0;
+                    if (bgCol0Ok && sprCol0Ok) status |= 0x40;
+                }
+
+                sprPixel    = pixel;
+                sprPalette  = (sprAttr[i] & 0x03) + 4; // sprite palettes 4–7
+                sprBehindBg = (sprAttr[i] & 0x20) != 0;
+                break; // first non-transparent sprite wins
+            }
+        }
+
+        // ---- Priority and palette lookup --------------------------------
+        int finalPixel, finalPalette;
+        if (bgPixel == 0 && sprPixel == 0) {
+            finalPixel   = 0;
+            finalPalette = 0;
+        } else if (bgPixel == 0) {
+            finalPixel   = sprPixel;
+            finalPalette = sprPalette;
+        } else if (sprPixel == 0) {
+            finalPixel   = bgPixel;
+            finalPalette = bgPalette;
+        } else if (!sprBehindBg) {
+            finalPixel   = sprPixel;   // sprite in front of BG
+            finalPalette = sprPalette;
+        } else {
+            finalPixel   = bgPixel;    // sprite behind BG
+            finalPalette = bgPalette;
+        }
+
         // Colour index 0 always uses the universal background colour ($3F00)
-        int palAddr    = 0x3F00 + (bgPixel == 0 ? 0 : bgPalette * 4 + bgPixel);
-        int colorIdx   = ppuBus.read(palAddr);
+        int palAddr  = 0x3F00 + (finalPixel == 0 ? 0 : finalPalette * 4 + finalPixel);
+        int colorIdx = ppuBus.read(palAddr);
         frameBuffer[py * SCREEN_WIDTH + px] = ppuBus.toArgb(colorIdx);
     }
 
@@ -463,10 +675,7 @@ public class PPU {
      */
     public static void main(String[] args) {
 
-        // ----------------------------------------------------------------
-        // 1. Minimal cartridge backed by flat CHR-RAM
-        // ----------------------------------------------------------------
-        final int[] chrRam = new int[0x2000]; // 8 KB CHR-RAM
+        final int[] chrRam = new int[0x2000];
 
         Cartridge cart = new Cartridge() {
             @Override public int         ppuRead (int a)       { return chrRam[a & 0x1FFF]; }
@@ -478,120 +687,55 @@ public class PPU {
         ppu.setCartridge(cart);
         ppu.reset();
 
-        // ----------------------------------------------------------------
-        // 2. Define four 8×8 tiles in CHR pattern table 0 ($0000)
-        //
-        //    Each tile = 16 bytes: plane-0 (8 B) then plane-1 (8 B).
-        //    Pixel colour index = (plane-1 bit << 1) | plane-0 bit  → 0–3
-        //
-        //    Tile $00 – blank (default zeroes, colour 0 everywhere)
-        //    Tile $01 – solid block           (colour 1 everywhere)
-        //    Tile $02 – hollow box            (colour 1 on outline only)
-        //    Tile $03 – checkerboard          (colour 1 on even pixels)
-        //    Tile $04 – cross / plus          (colour 1 on centre row+col)
-        // ----------------------------------------------------------------
-
         int[][] tileDefs = {
-            /* $01 solid   */ { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,
-                                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
-            /* $02 box     */ { 0xFF,0x81,0x81,0x81,0x81,0x81,0x81,0xFF,
-                                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
-            /* $03 checker */ { 0xAA,0x55,0xAA,0x55,0xAA,0x55,0xAA,0x55,
-                                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
-            /* $04 cross   */ { 0x18,0x18,0x18,0xFF,0xFF,0x18,0x18,0x18,
-                                0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }
+            { 0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF, 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
+            { 0xFF,0x81,0x81,0x81,0x81,0x81,0x81,0xFF, 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
+            { 0xAA,0x55,0xAA,0x55,0xAA,0x55,0xAA,0x55, 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 },
+            { 0x18,0x18,0x18,0xFF,0xFF,0x18,0x18,0x18, 0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00 }
         };
         for (int t = 0; t < tileDefs.length; t++) {
-            int base = (t + 1) * 16; // tiles start at index 1
+            int base = (t + 1) * 16;
             for (int b = 0; b < 16; b++) chrRam[base + b] = tileDefs[t][b];
         }
 
-        // ----------------------------------------------------------------
-        // 3. Write nametable ($2000–$23BF) and attribute ($23C0–$23FF)
-        //    via PPUADDR / PPUDATA register writes.
-        //    Rendering is off during setup so v just increments freely.
-        // ----------------------------------------------------------------
-
-        ppu.writeRegister(1, 0x00); // PPUMASK: rendering disabled during setup
-
-        // Point v at $2000
-        ppu.writeRegister(6, 0x20);
-        ppu.writeRegister(6, 0x00);
-
-        // 32 × 30 = 960 tile entries
+        ppu.writeRegister(1, 0x00);
+        ppu.writeRegister(6, 0x20); ppu.writeRegister(6, 0x00);
         for (int row = 0; row < 30; row++) {
             for (int col = 0; col < 32; col++) {
-                int tile;
-                boolean border      = row == 0 || row == 29 || col == 0  || col == 31;
-                boolean innerBorder = row == 1 || row == 28 || col == 1  || col == 30;
-                if      (border)       tile = 0x01; // solid
-                else if (innerBorder)  tile = 0x02; // hollow box
-                else                   tile = ((row + col) & 1) == 0 ? 0x03 : 0x04;
+                boolean border      = row == 0 || row == 29 || col == 0 || col == 31;
+                boolean innerBorder = row == 1 || row == 28 || col == 1 || col == 30;
+                int tile = border ? 0x01 : innerBorder ? 0x02
+                         : ((row + col) & 1) == 0 ? 0x03 : 0x04;
                 ppu.writeRegister(7, tile);
             }
         }
-
-        // 64 attribute bytes (all palette 0)
         for (int i = 0; i < 64; i++) ppu.writeRegister(7, 0x00);
-
-        // ----------------------------------------------------------------
-        // 4. Write background palette 0 at $3F00
-        // ----------------------------------------------------------------
-
-        ppu.writeRegister(6, 0x3F);
-        ppu.writeRegister(6, 0x00);
-
-        ppu.writeRegister(7, 0x0F); // $3F00 universal BG  – black
-        ppu.writeRegister(7, 0x20); // $3F01 colour 1      – white
-        ppu.writeRegister(7, 0x10); // $3F02 colour 2      – light grey
-        ppu.writeRegister(7, 0x00); // $3F03 colour 3      – dark grey
-
-        // ----------------------------------------------------------------
-        // 5. Reset scroll to NT0 (0, 0) and enable background rendering.
-        //    PPUCTRL must be written AFTER the PPUADDR $3F00 writes because
-        //    those writes set nametable-select bits in t; PPUCTRL clears them.
-        // ----------------------------------------------------------------
-
-        ppu.writeRegister(0, 0x00); // PPUCTRL: clears t bits 11–10 (NT0, BG pattern $0000)
-        ppu.writeRegister(5, 0x00); // PPUSCROLL X = 0
-        ppu.writeRegister(5, 0x00); // PPUSCROLL Y = 0
-        ppu.writeRegister(1, 0x08); // PPUMASK: show background
-
-        // ----------------------------------------------------------------
-        // 6. Run two full frames.
-        //    Frame 1 primes the pipeline (v is in an arbitrary state after
-        //    the PPUDATA writes).  Frame 2 starts cleanly because the
-        //    pre-render scanline at the end of frame 1 restores v from t.
-        // ----------------------------------------------------------------
+        ppu.writeRegister(6, 0x3F); ppu.writeRegister(6, 0x00);
+        ppu.writeRegister(7, 0x0F);
+        ppu.writeRegister(7, 0x20);
+        ppu.writeRegister(7, 0x10);
+        ppu.writeRegister(7, 0x00);
+        ppu.writeRegister(0, 0x00);
+        ppu.writeRegister(5, 0x00); ppu.writeRegister(5, 0x00);
+        ppu.writeRegister(1, 0x1E); // BG + sprites enabled
 
         while (!ppu.isFrameComplete()) ppu.tick();
         ppu.clearFrameComplete();
         while (!ppu.isFrameComplete()) ppu.tick();
 
-        // ----------------------------------------------------------------
-        // 7. Render frame buffer to the console as ASCII art.
-        //    Sample every 4th pixel horizontally and every 4th scanline
-        //    vertically → 64 columns × 60 rows.
-        // ----------------------------------------------------------------
-
         int[]  fb      = ppu.getFrameBuffer();
         char[] SHADING = { ' ', '.', '+', '#' };
-
-        String hBorder = "+" + "-".repeat(64) + "+";
-        System.out.println(hBorder);
-
+        String border  = "+" + "-".repeat(64) + "+";
+        System.out.println(border);
         for (int py = 0; py < SCREEN_HEIGHT; py += 4) {
-            StringBuilder sb = new StringBuilder(66);
-            sb.append('|');
-            for (int px = 0; px < SCREEN_WIDTH; px += 4) {
-                int argb       = fb[py * SCREEN_WIDTH + px];
+            StringBuilder sb = new StringBuilder(66).append('|');
+            for (int px2 = 0; px2 < SCREEN_WIDTH; px2 += 4) {
+                int argb       = fb[py * SCREEN_WIDTH + px2];
                 int brightness = ((argb >> 16 & 0xFF) + (argb >> 8 & 0xFF) + (argb & 0xFF)) / 3;
                 sb.append(SHADING[brightness * (SHADING.length - 1) / 255]);
             }
-            sb.append('|');
-            System.out.println(sb);
+            System.out.println(sb.append('|'));
         }
-
-        System.out.println(hBorder);
+        System.out.println(border);
     }
 }

@@ -24,6 +24,9 @@ public class NES {
     /** Total CPU cycles executed since the last reset. */
     private long masterClock;
 
+    /** Total frames rendered since the last reset. */
+    private long frameCount;
+
     public NES() {
         ppu = new PPU();
         bus = new Bus(ppu);
@@ -54,6 +57,7 @@ public class NES {
         ppu.reset();
         cpu.reset();
         masterClock = 0;
+        frameCount  = 0;
     }
 
     // -------------------------------------------------------------------------
@@ -80,6 +84,7 @@ public class NES {
             step();
         } while (!ppu.isFrameComplete());
         ppu.clearFrameComplete();
+        frameCount++;
     }
 
     // -------------------------------------------------------------------------
@@ -92,7 +97,8 @@ public class NES {
     }
 
     /** Total CPU cycles executed since the last reset (1 cycle = 3 PPU ticks). */
-    public long getMasterClock() {
-        return masterClock;
-    }
+    public long getMasterClock() { return masterClock; }
+
+    /** Total frames rendered since the last reset. */
+    public long getFrameCount() { return frameCount; }
 }
