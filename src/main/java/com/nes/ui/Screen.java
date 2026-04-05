@@ -22,13 +22,15 @@ public class Screen extends JPanel {
     private final BufferedImage image =
             new BufferedImage(NES_W, NES_H, BufferedImage.TYPE_INT_ARGB);
 
-    private volatile int controllerState = 0;
+    private volatile int  controllerState = 0;
+    private volatile long masterClock     = 0;
 
     public Screen(int scale) {
         this.scale    = Math.max(1, scale);
         this.sidebarW = this.scale * 44;   // ~132 px at 3×
         setPreferredSize(new Dimension(NES_W * this.scale + sidebarW, NES_H * this.scale));
         setBackground(new Color(30, 30, 30));
+        setFocusable(false);  // keep keyboard focus on the JFrame
     }
 
     // -------------------------------------------------------------------------
@@ -42,6 +44,11 @@ public class Screen extends JPanel {
 
     public void updateController(int buttonState) {
         controllerState = buttonState;
+        repaint();
+    }
+
+    public void updateClock(long ticks) {
+        masterClock = ticks;
         repaint();
     }
 
@@ -151,6 +158,34 @@ public class Screen extends JPanel {
         g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, unit * 2 / 3));
         drawCentred(g2, "Z", cx - unit, abY + brad + unit * 2 / 3);
         drawCentred(g2, "X", cx + unit, abY + brad + unit * 2 / 3);
+
+        // ── Clock counter ──────────────────────────────────────
+        int clockY = y + h - unit * 2;
+        g2.setColor(new Color(50, 50, 50));
+        g2.fillRoundRect(x + unit / 2, clockY - unit / 2,
+                         w - unit, unit * 2, unit / 2, unit / 2);
+
+        g2.setColor(new Color(80, 220, 120));
+        g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(7, unit * 2 / 3)));
+        drawCentred(g2, "CLK", cx, clockY + unit / 4);
+
+        g2.setColor(new Color(180, 255, 180));
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, Math.max(6, unit / 2)));
+        // Format: show value in millions (M) if large enough, else raw
+        String clockStr = formatClock(masterClock);
+        drawCentred(g2, clockStr, cx, clockY + unit);
+    }
+
+    private static String formatClock(long ticks) {
+        if (ticks >= 1_000_000_000L) {
+            return String.format("%.2fB", ticks / 1_000_000_000.0);
+        } else if (ticks >= 1_000_000L) {
+            return String.format("%.2fM", ticks / 1_000_000.0);
+        } else if (ticks >= 1_000L) {
+            return String.format("%.1fK", ticks / 1_000.0);
+        } else {
+            return String.valueOf(ticks);
+        }
     }
 
     // -------------------------------------------------------------------------
@@ -204,10 +239,12 @@ public class Screen extends JPanel {
         JFrame frame = new JFrame(title);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setResizable(false);
+        frame.setFocusable(true);
         frame.add(screen);
         frame.pack();
         frame.setLocationRelativeTo(null);
         frame.setVisible(true);
+        frame.requestFocusInWindow();
         return frame;
     }
 }
