@@ -1,13 +1,15 @@
 package com.nes.apu;
 
+import java.util.function.IntUnaryOperator;
+
 /**
  * Ricoh 2A03 Audio Processing Unit — NTSC variant.
  *
- * Implements four channels:
+ * All five channels:
  *   Pulse 1 & 2  ($4000–$4007) — square waves with envelope, sweep, length counter
  *   Triangle     ($4008–$400B) — triangle wave with linear + length counter
  *   Noise        ($400C–$400F) — LFSR noise with envelope + length counter
- *   DMC          ($4010–$4013) — stubbed (output = 0; avoids length-counter muting)
+ *   DMC          ($4010–$4013) — delta-modulation sampler, reads from CPU bus
  *
  * Audio is mixed using the NES non-linear mixing formula and streamed to
  * {@link AudioOutput} at {@link #SAMPLE_RATE} Hz.
@@ -38,6 +40,12 @@ public class APU {
     private static final int[] TRI_TABLE = {
         15, 14, 13, 12, 11, 10, 9, 8, 7, 6, 5, 4, 3, 2, 1, 0,
          0,  1,  2,  3,  4,  5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15
+    };
+
+    /** NTSC DMC output-rate periods (CPU cycles between output-unit clocks). */
+    private static final int[] DMC_PERIOD_TABLE = {
+        428, 380, 340, 320, 286, 254, 226, 214,
+        190, 160, 142, 128, 106,  84,  72,  54
     };
 
     // ── Pulse channels (index 0 = Pulse 1, index 1 = Pulse 2) ────────────────
@@ -90,9 +98,28 @@ public class APU {
     private int     noiseTimer;
     private int     noisePeriod;
 
+    // ── DMC channel ($4010–$4013) ─────────────────────────────────────────────
+
+    private final IntUnaryOperator busReader;   // reads one byte from CPU address space
+
+    private boolean dmcIrqEnabled;             // $4010 bit 7
+    private boolean dmcLoop;                   // $4010 bit 6
+    private int     dmcPeriod;                 // timer period from DMC_PERIOD_TABLE
+    private int     dmcTimer;                  // countdown timer
+    private int     dmcOutputLevel;            // 7-bit DAC value (0–127)
+    private int     dmcSampleAddr;             // base address: $C000 + $40 * reg
+    private int     dmcSampleLength;           // base length:  $10 * reg + 1
+    private int     dmcCurrentAddr;            // current read pointer
+    private int     dmcBytesRemaining;         // bytes left to read from memory
+    private int     dmcSampleBuffer;           // loaded byte; -1 = empty
+    private int     dmcShiftReg;               // 8-bit output shift register
+    private int     dmcBitsRemaining;          // bits remaining in shift register
+    private boolean dmcSilence;                // true when shift register is empty
+    private boolean dmcIrq;                    // DMC interrupt request flag
+
     // ── Frame counter ─────────────────────────────────────────────────────────
 
-    private int     frameMode;       // 0 = 4-step, 1 = 5-step
+    private int     frameMode;
     private boolean frameIrqInhibit;
     private int     frameCycles;
     private boolean frameIrq;
@@ -108,6 +135,32 @@ public class APU {
     private volatile boolean muted = true;
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Constructors
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /**
+     * Primary constructor.
+     *
+     * @param busReader callback that reads one byte from the CPU address space;
+     *                  used by the DMC channel to stream samples from ROM/RAM.
+     */
+    public APU(IntUnaryOperator busReader) {
+        this.busReader        = busReader;
+        this.dmcPeriod        = DMC_PERIOD_TABLE[0];
+        this.dmcSampleBuffer  = -1;  // empty
+        this.dmcSilence       = true;
+        this.dmcBitsRemaining = 0;   // 0 = load next byte on first timer expiry
+    }
+
+    /**
+     * No-arg constructor — DMC reads return 0 (silence).
+     * Suitable for unit tests that do not exercise DMC sample playback.
+     */
+    public APU() {
+        this(addr -> 0);
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Lifecycle
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -119,15 +172,15 @@ public class APU {
     /** Reset all channels to their power-up state. */
     public void reset() {
         for (int p = 0; p < 2; p++) {
-            pulseEnabled[p]   = false;
-            pulseLenCtr[p]    = 0;
-            pulseSeqPos[p]    = 0;
-            pulseTimer[p]     = 0;
-            pulsePeriod[p]    = 0;
-            pulseEnvelope[p]  = 0;
-            pulseEnvTimer[p]  = 0;
-            sweepTimer[p]     = 0;
-            sweepReload[p]    = false;
+            pulseEnabled[p]  = false;
+            pulseLenCtr[p]   = 0;
+            pulseSeqPos[p]   = 0;
+            pulseTimer[p]    = 0;
+            pulsePeriod[p]   = 0;
+            pulseEnvelope[p] = 0;
+            pulseEnvTimer[p] = 0;
+            sweepTimer[p]    = 0;
+            sweepReload[p]   = false;
         }
         triEnabled          = false;
         triLenCtr           = 0;
@@ -139,6 +192,22 @@ public class APU {
         noiseLenCtr         = 0;
         noiseShiftReg       = 1;
         noiseTimer          = 0;
+        // DMC
+        dmcIrqEnabled       = false;
+        dmcLoop             = false;
+        dmcPeriod           = DMC_PERIOD_TABLE[0];
+        dmcTimer            = 0;
+        dmcOutputLevel      = 0;
+        dmcSampleAddr       = 0xC000;
+        dmcSampleLength     = 1;
+        dmcCurrentAddr      = 0xC000;
+        dmcBytesRemaining   = 0;
+        dmcSampleBuffer     = -1;
+        dmcShiftReg         = 0;
+        dmcBitsRemaining    = 0;   // triggers buffer load on first timer expiry
+        dmcSilence          = true;
+        dmcIrq              = false;
+        // Misc
         frameCycles         = 0;
         frameIrq            = false;
         apuCycle            = false;
@@ -167,8 +236,8 @@ public class APU {
 
             // ── Triangle ─────────────────────────────────────────────────────
             case 0x4008:
-                triLenHalt          = (val & 0x80) != 0;
-                triLinearReload     = val & 0x7F;
+                triLenHalt      = (val & 0x80) != 0;
+                triLinearReload = val & 0x7F;
                 break;
             case 0x400A:
                 triPeriod = (triPeriod & 0x700) | val;
@@ -196,8 +265,25 @@ public class APU {
                 noiseEnvelope = 15;
                 break;
 
-            // ── DMC ($4010–$4013): stub — channel output stays at 0 ──────────
-            case 0x4010: case 0x4011: case 0x4012: case 0x4013: break;
+            // ── DMC ──────────────────────────────────────────────────────────
+            case 0x4010:
+                dmcIrqEnabled = (val & 0x80) != 0;
+                dmcLoop       = (val & 0x40) != 0;
+                dmcPeriod     = DMC_PERIOD_TABLE[val & 0x0F];
+                if (!dmcIrqEnabled) dmcIrq = false;
+                break;
+            case 0x4011:
+                // Direct load: immediately sets the 7-bit output level
+                dmcOutputLevel = val & 0x7F;
+                break;
+            case 0x4012:
+                // Sample address: $C000 + $40 * val  (val = 0 → $C000, val = 1 → $C040…)
+                dmcSampleAddr = 0xC000 | (val << 6);
+                break;
+            case 0x4013:
+                // Sample length in bytes: $10 * val + 1
+                dmcSampleLength = (val << 4) | 1;
+                break;
 
             // ── Status ($4015) ────────────────────────────────────────────────
             case 0x4015:
@@ -209,7 +295,18 @@ public class APU {
                 if (!pulseEnabled[1]) pulseLenCtr[1] = 0;
                 if (!triEnabled)      triLenCtr       = 0;
                 if (!noiseEnabled)    noiseLenCtr     = 0;
+                // Clear IRQ flags first (before fill, which may raise dmcIrq again)
+                dmcIrq   = false;
                 frameIrq = false;
+                // DMC: disable clears channel; enable restarts if idle
+                if ((val & 0x10) == 0) {
+                    dmcBytesRemaining = 0;
+                    dmcSampleBuffer   = -1;  // discard any buffered byte
+                } else if (dmcBytesRemaining == 0) {
+                    dmcCurrentAddr    = dmcSampleAddr;
+                    dmcBytesRemaining = dmcSampleLength;
+                    tryFillDmcBuffer();      // may set dmcIrq again (e.g. length = 1)
+                }
                 break;
 
             // ── Frame counter ($4017) ─────────────────────────────────────────
@@ -228,12 +325,15 @@ public class APU {
 
     public int readStatus() {
         int s = 0;
-        if (pulseLenCtr[0] > 0) s |= 0x01;
-        if (pulseLenCtr[1] > 0) s |= 0x02;
-        if (triLenCtr      > 0) s |= 0x04;
-        if (noiseLenCtr    > 0) s |= 0x08;
-        if (frameIrq)           s |= 0x40;
+        if (pulseLenCtr[0]   > 0) s |= 0x01;
+        if (pulseLenCtr[1]   > 0) s |= 0x02;
+        if (triLenCtr         > 0) s |= 0x04;
+        if (noiseLenCtr       > 0) s |= 0x08;
+        if (dmcBytesRemaining > 0)     s |= 0x10;
+        if (frameIrq)              s |= 0x40;
+        if (dmcIrq)                s |= 0x80;
         frameIrq = false;
+        dmcIrq   = false;
         return s;
     }
 
@@ -274,19 +374,76 @@ public class APU {
     // ─────────────────────────────────────────────────────────────────────────
 
     public void tick() {
-        // Pulse timers run at half the CPU rate (every other CPU cycle)
         apuCycle = !apuCycle;
         if (apuCycle) tickPulseTimers();
 
         tickTriangleTimer();
         tickNoiseTimer();
+        tickDMC();
         tickFrameCounter();
 
-        // Output one sample at SAMPLE_RATE Hz using an accumulator
         sampleAccum += SAMPLE_RATE;
         if (sampleAccum >= CPU_FREQ) {
             sampleAccum -= CPU_FREQ;
             audioOutput.write(muted ? 0.0f : mix());
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // DMC tick
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void tickDMC() {
+        if (dmcTimer > 0) {
+            dmcTimer--;
+            return;
+        }
+        dmcTimer = dmcPeriod;
+
+        // When the shift register is empty, load the next byte before clocking
+        if (dmcBitsRemaining == 0) {
+            if (dmcSampleBuffer >= 0) {
+                dmcShiftReg      = dmcSampleBuffer;
+                dmcSampleBuffer  = -1;
+                dmcSilence       = false;
+                dmcBitsRemaining = 8;
+            } else {
+                dmcSilence = true;
+            }
+            tryFillDmcBuffer();
+        }
+
+        // Clock one bit out of the shift register
+        if (!dmcSilence && dmcBitsRemaining > 0) {
+            if ((dmcShiftReg & 1) == 1) {
+                if (dmcOutputLevel <= 125) dmcOutputLevel += 2;
+            } else {
+                if (dmcOutputLevel >= 2)  dmcOutputLevel -= 2;
+            }
+            dmcShiftReg >>= 1;
+            dmcBitsRemaining--;
+        }
+    }
+
+    /**
+     * Read one byte from the CPU bus into the sample buffer if the buffer is
+     * empty and there are bytes left in the current sample.
+     * The CPU would normally be stalled 1–4 cycles here; we skip the stall.
+     */
+    private void tryFillDmcBuffer() {
+        if (dmcSampleBuffer >= 0 || dmcBytesRemaining == 0) return;
+
+        dmcSampleBuffer = busReader.applyAsInt(dmcCurrentAddr) & 0xFF;
+        dmcCurrentAddr  = (dmcCurrentAddr == 0xFFFF) ? 0x8000 : (dmcCurrentAddr + 1);
+        dmcBytesRemaining--;
+
+        if (dmcBytesRemaining == 0) {
+            if (dmcLoop) {
+                dmcCurrentAddr    = dmcSampleAddr;
+                dmcBytesRemaining = dmcSampleLength;
+            } else if (dmcIrqEnabled) {
+                dmcIrq = true;
+            }
         }
     }
 
@@ -297,7 +454,6 @@ public class APU {
     private void tickFrameCounter() {
         frameCycles++;
         if (frameMode == 0) {
-            // 4-step sequence
             switch (frameCycles) {
                 case 7457:  clockEnvelopes(); break;
                 case 14913: clockEnvelopes(); clockLengthAndSweep(); break;
@@ -310,7 +466,6 @@ public class APU {
                     break;
             }
         } else {
-            // 5-step sequence (no IRQ)
             switch (frameCycles) {
                 case 7457:  clockEnvelopes(); break;
                 case 14913: clockEnvelopes(); clockLengthAndSweep(); break;
@@ -325,7 +480,6 @@ public class APU {
     }
 
     private void clockEnvelopes() {
-        // Pulse envelopes
         for (int p = 0; p < 2; p++) {
             if (pulseEnvTimer[p] > 0) {
                 pulseEnvTimer[p]--;
@@ -338,14 +492,12 @@ public class APU {
                 }
             }
         }
-        // Triangle linear counter
         if (triLinearReloadFlag) {
             triLinearCtr = triLinearReload;
         } else if (triLinearCtr > 0) {
             triLinearCtr--;
         }
         if (!triLenHalt) triLinearReloadFlag = false;
-        // Noise envelope
         if (noiseEnvTimer > 0) {
             noiseEnvTimer--;
         } else {
@@ -361,7 +513,6 @@ public class APU {
     private void clockLengthAndSweep() {
         for (int p = 0; p < 2; p++) {
             if (!pulseLenHalt[p] && pulseLenCtr[p] > 0) pulseLenCtr[p]--;
-            // Sweep unit
             if (sweepReload[p]) {
                 sweepTimer[p] = sweepPeriod[p];
                 sweepReload[p] = false;
@@ -371,7 +522,6 @@ public class APU {
                 sweepTimer[p] = sweepPeriod[p];
                 if (sweepEnabled[p] && sweepShift[p] > 0 && !isSweepMuting(p)) {
                     int change = pulsePeriod[p] >> sweepShift[p];
-                    // Pulse 1 negate: one's complement; pulse 2: two's complement
                     pulsePeriod[p] += sweepNegate[p] ? -(change + (p == 0 ? 1 : 0)) : change;
                 }
             }
@@ -410,29 +560,29 @@ public class APU {
             noiseTimer--;
         } else {
             noiseTimer = noisePeriod;
-            int bit   = noiseMode ? 6 : 1;
-            int feed  = ((noiseShiftReg ^ (noiseShiftReg >> bit)) & 1);
+            int bit  = noiseMode ? 6 : 1;
+            int feed = ((noiseShiftReg ^ (noiseShiftReg >> bit)) & 1);
             noiseShiftReg = (noiseShiftReg >> 1) | (feed << 14);
         }
     }
 
     // ─────────────────────────────────────────────────────────────────────────
-    // Output
+    // Output  — NES non-linear mixing formula
     // ─────────────────────────────────────────────────────────────────────────
 
-    /** NES non-linear mixer — returns a value roughly in [0, 1]. */
     private float mix() {
         int p1    = pulseOutput(0);
         int p2    = pulseOutput(1);
         int tri   = triOutput();
         int noise = noiseOutput();
+        int dmc   = dmcOutputLevel;
 
         float pulseOut = 0.0f;
         if (p1 + p2 > 0)
             pulseOut = (float) (95.88 / (8128.0 / (p1 + p2) + 100.0));
 
         float tndOut = 0.0f;
-        double tnd = tri / 8227.0 + noise / 12241.0;
+        double tnd = tri / 8227.0 + noise / 12241.0 + dmc / 22638.0;
         if (tnd > 0)
             tndOut = (float) (159.79 / (1.0 / tnd + 100.0));
 
@@ -440,10 +590,10 @@ public class APU {
     }
 
     private int pulseOutput(int p) {
-        if (!pulseEnabled[p])                        return 0;
-        if (pulseLenCtr[p] == 0)                     return 0;
+        if (!pulseEnabled[p])                             return 0;
+        if (pulseLenCtr[p] == 0)                          return 0;
         if (DUTY_TABLE[pulseDuty[p]][pulseSeqPos[p]] == 0) return 0;
-        if (isSweepMuting(p))                        return 0;
+        if (isSweepMuting(p))                             return 0;
         return pulseEnvConst[p] ? pulseEnvPeriod[p] : pulseEnvelope[p];
     }
 
@@ -458,12 +608,10 @@ public class APU {
         return noiseEnvConst ? noiseEnvPeriod : noiseEnvelope;
     }
 
-    /** A pulse channel is silenced by sweep when the period is out of range. */
     private boolean isSweepMuting(int p) {
         if (pulsePeriod[p] < 8) return true;
-        if (!sweepNegate[p] && sweepShift[p] > 0) {
+        if (!sweepNegate[p] && sweepShift[p] > 0)
             return (pulsePeriod[p] + (pulsePeriod[p] >> sweepShift[p])) > 0x7FF;
-        }
         return false;
     }
 
@@ -473,4 +621,14 @@ public class APU {
 
     public void setMuted(boolean muted) { this.muted = muted; }
     public boolean isMuted()            { return muted; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Package-private accessors for unit tests
+    // ─────────────────────────────────────────────────────────────────────────
+
+    int getDmcOutputLevel()    { return dmcOutputLevel;    }
+    int getDmcBytesRemaining() { return dmcBytesRemaining; }
+    boolean isDmcIrqPending()  { return dmcIrq;            }
+    int getDmcSampleAddr()     { return dmcSampleAddr;     }
+    int getDmcSampleLength()   { return dmcSampleLength;   }
 }

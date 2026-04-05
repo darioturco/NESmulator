@@ -31,8 +31,8 @@ public class NES {
 
     public NES() {
         ppu = new PPU();
-        apu = new APU();
-        bus = new Bus(ppu);
+        bus = new Bus(ppu);          // bus created first so apu can hold bus::read
+        apu = new APU(bus::read);    // DMC reads samples directly from CPU address space
         bus.setAPU(apu);
         cpu = new CPU(bus);
 
