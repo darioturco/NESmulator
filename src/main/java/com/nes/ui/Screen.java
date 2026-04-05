@@ -1,5 +1,6 @@
 package com.nes.ui;
 
+import com.nes.memory.Controller;
 import com.nes.ppu.PPU;
 
 import javax.swing.*;
@@ -8,54 +9,39 @@ import java.awt.image.BufferedImage;
 
 /**
  * Swing panel that displays the PPU frame buffer at an integer scale factor.
- *
- * The NES outputs 256×240 pixels.  The panel scales that rectangle to fill
- * the window using nearest-neighbour interpolation (no blurring) so pixels
- * stay crisp.
- *
- * Usage:
- * <pre>
- *   Screen screen = new Screen(2);        // 2× → 512×480
- *   Screen.openWindow("NES", screen);     // shows the JFrame
- *   screen.updateFrame(ppu.getFrameBuffer());
- * </pre>
+ * A controller sidebar is drawn to the right of the NES screen.
  */
 public class Screen extends JPanel {
 
-    /** Native NES resolution. */
     public static final int NES_W = PPU.SCREEN_WIDTH;
     public static final int NES_H = PPU.SCREEN_HEIGHT;
 
     private final int scale;
+    private final int sidebarW;   // width of the controller panel in pixels
 
-    /**
-     * Intermediate image written with PPU ARGB data then drawn scaled.
-     * TYPE_INT_ARGB matches the int[] layout produced by PaletteMemory.toArgb().
-     */
     private final BufferedImage image =
             new BufferedImage(NES_W, NES_H, BufferedImage.TYPE_INT_ARGB);
 
-    /**
-     * @param scale integer scale factor (1 = 256×240, 2 = 512×480, 3 = 768×720 …)
-     */
+    private volatile int controllerState = 0;
+
     public Screen(int scale) {
-        this.scale = Math.max(1, scale);
-        setPreferredSize(new Dimension(NES_W * this.scale, NES_H * this.scale));
-        setBackground(Color.BLACK);
+        this.scale    = Math.max(1, scale);
+        this.sidebarW = this.scale * 44;   // ~132 px at 3×
+        setPreferredSize(new Dimension(NES_W * this.scale + sidebarW, NES_H * this.scale));
+        setBackground(new Color(30, 30, 30));
     }
 
     // -------------------------------------------------------------------------
-    // Frame update
+    // Update
     // -------------------------------------------------------------------------
 
-    /**
-     * Copy a PPU frame buffer into the panel and schedule a repaint.
-     *
-     * @param argbPixels array of {@code NES_W * NES_H} ARGB ints
-     *                   (as returned by {@link PPU#getFrameBuffer()})
-     */
     public void updateFrame(int[] argbPixels) {
         image.setRGB(0, 0, NES_W, NES_H, argbPixels, 0, NES_W);
+        repaint();
+    }
+
+    public void updateController(int buttonState) {
+        controllerState = buttonState;
         repaint();
     }
 
@@ -67,32 +53,160 @@ public class Screen extends JPanel {
     protected void paintComponent(Graphics g) {
         super.paintComponent(g);
         Graphics2D g2 = (Graphics2D) g;
-        // Nearest-neighbour: keeps pixel-art style without blurring
+
+        // NES screen (left portion)
         g2.setRenderingHint(RenderingHints.KEY_INTERPOLATION,
                             RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        g2.drawImage(image, 0, 0, getWidth(), getHeight(), null);
+        g2.drawImage(image, 0, 0, NES_W * scale, NES_H * scale, null);
+
+        // Sidebar (right portion)
+        g2.setRenderingHint(RenderingHints.KEY_ANTIALIASING,
+                            RenderingHints.VALUE_ANTIALIAS_ON);
+        drawSidebar(g2, NES_W * scale, 0, sidebarW, NES_H * scale);
     }
 
     // -------------------------------------------------------------------------
-    // Window helpers
+    // Controller sidebar
     // -------------------------------------------------------------------------
 
-    /**
-     * Create and show a {@link JFrame} containing {@code screen}.
-     * Must be called on the Event Dispatch Thread (or during startup before
-     * the EDT becomes active).
-     *
-     * @param title  window title
-     * @param screen the screen panel to embed
-     * @return the created frame
-     */
+    private static final Color SIDEBAR_BG  = new Color(25, 25, 25);
+    private static final Color BTN_OFF     = new Color(70, 70, 70);
+    private static final Color BTN_ON      = new Color(230, 230, 60);
+    private static final Color DPAD_OFF    = new Color(55, 55, 55);
+    private static final Color DPAD_ON     = new Color(60, 200, 60);
+    private static final Color A_ON        = new Color(220, 60,  60);
+    private static final Color B_ON        = new Color(60,  100, 220);
+    private static final Color LABEL_COLOR = new Color(180, 180, 180);
+    private static final Color DIM_COLOR   = new Color(100, 100, 100);
+
+    private void drawSidebar(Graphics2D g2, int x, int y, int w, int h) {
+        // Background
+        g2.setColor(SIDEBAR_BG);
+        g2.fillRect(x, y, w, h);
+
+        // Divider line
+        g2.setColor(new Color(60, 60, 60));
+        g2.fillRect(x, y, 2, h);
+
+        int cx = x + w / 2;           // horizontal centre of sidebar
+        int unit = w / 6;             // base unit (~22 px at 3×)
+
+        // Title
+        g2.setColor(LABEL_COLOR);
+        g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, unit));
+        drawCentred(g2, "P1", cx, y + unit * 2);
+
+        // ── D-Pad ──────────────────────────────────────────────
+        int dpY = y + h / 4;
+
+        drawArrow(g2, cx,          dpY - unit, 0,
+                isPressed(Controller.BTN_UP)    ? DPAD_ON : DPAD_OFF, unit);
+        drawArrow(g2, cx,          dpY + unit, 2,
+                isPressed(Controller.BTN_DOWN)  ? DPAD_ON : DPAD_OFF, unit);
+        drawArrow(g2, cx - unit,   dpY,        3,
+                isPressed(Controller.BTN_LEFT)  ? DPAD_ON : DPAD_OFF, unit);
+        drawArrow(g2, cx + unit,   dpY,        1,
+                isPressed(Controller.BTN_RIGHT) ? DPAD_ON : DPAD_OFF, unit);
+
+        // Centre pip
+        g2.setColor(new Color(40, 40, 40));
+        int pip = unit / 3;
+        g2.fillRect(cx - pip, dpY - pip, pip * 2, pip * 2);
+
+        // D-pad key labels
+        g2.setColor(DIM_COLOR);
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, unit * 2 / 3));
+        drawCentred(g2, "↑",  cx,          dpY - unit * 2);
+        drawCentred(g2, "↓",  cx,          dpY + unit * 2 + unit / 2);
+        drawCentred(g2, "←",  cx - unit * 2, dpY + unit / 3);
+        drawCentred(g2, "→",  cx + unit * 2, dpY + unit / 3);
+
+        // ── SELECT / START ─────────────────────────────────────
+        int midY = y + h / 2 + unit;
+        int ow   = unit * 2;
+        int oh   = unit;
+
+        drawOval(g2, cx - unit * 2, midY, ow, oh,
+                isPressed(Controller.BTN_SELECT) ? BTN_ON : BTN_OFF, "SEL", unit);
+        drawOval(g2, cx + unit,     midY, ow, oh,
+                isPressed(Controller.BTN_START)  ? BTN_ON : BTN_OFF, "STA", unit);
+
+        // key labels under the ovals
+        g2.setColor(DIM_COLOR);
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, unit * 2 / 3));
+        drawCentred(g2, "Q", cx - unit * 2, midY + oh + unit * 2 / 3);
+        drawCentred(g2, "W", cx + unit,     midY + oh + unit * 2 / 3);
+
+        // ── B / A buttons ──────────────────────────────────────
+        int abY  = y + h * 3 / 4 + unit;
+        int brad = unit;
+
+        drawCircle(g2, cx - unit, abY, brad,
+                isPressed(Controller.BTN_B) ? B_ON : BTN_OFF, "B", unit);
+        drawCircle(g2, cx + unit, abY, brad,
+                isPressed(Controller.BTN_A) ? A_ON : BTN_OFF, "A", unit);
+
+        // key labels under the circles
+        g2.setColor(DIM_COLOR);
+        g2.setFont(new Font(Font.MONOSPACED, Font.PLAIN, unit * 2 / 3));
+        drawCentred(g2, "Z", cx - unit, abY + brad + unit * 2 / 3);
+        drawCentred(g2, "X", cx + unit, abY + brad + unit * 2 / 3);
+    }
+
+    // -------------------------------------------------------------------------
+    // Drawing helpers
+    // -------------------------------------------------------------------------
+
+    /** dir: 0=up  1=right  2=down  3=left */
+    private void drawArrow(Graphics2D g2, int cx, int cy, int dir, Color c, int s) {
+        int h = s * 3 / 4;
+        int[] xp, yp;
+        switch (dir) {
+            case 0:  xp = new int[]{cx,      cx - h,   cx + h  }; yp = new int[]{cy - h,  cy + h/2, cy + h/2}; break;
+            case 1:  xp = new int[]{cx + h,  cx - h/2, cx - h/2}; yp = new int[]{cy,      cy - h,   cy + h  }; break;
+            case 2:  xp = new int[]{cx,      cx - h,   cx + h  }; yp = new int[]{cy + h,  cy - h/2, cy - h/2}; break;
+            default: xp = new int[]{cx - h,  cx + h/2, cx + h/2}; yp = new int[]{cy,      cy - h,   cy + h  }; break;
+        }
+        g2.setColor(c);
+        g2.fillPolygon(xp, yp, 3);
+    }
+
+    private void drawOval(Graphics2D g2, int cx, int cy, int w, int h, Color c, String label, int unit) {
+        g2.setColor(c);
+        g2.fillRoundRect(cx - w / 2, cy - h / 2, w, h, h, h);
+        g2.setColor(Color.BLACK);
+        g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, Math.max(6, unit / 2)));
+        drawCentred(g2, label, cx, cy + g2.getFontMetrics().getAscent() / 2 - 1);
+    }
+
+    private void drawCircle(Graphics2D g2, int cx, int cy, int r, Color c, String label, int unit) {
+        g2.setColor(c);
+        g2.fillOval(cx - r, cy - r, r * 2, r * 2);
+        g2.setColor(Color.BLACK);
+        g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, Math.max(7, unit * 2 / 3)));
+        drawCentred(g2, label, cx, cy + g2.getFontMetrics().getAscent() / 2 - 1);
+    }
+
+    private void drawCentred(Graphics2D g2, String text, int cx, int cy) {
+        FontMetrics fm = g2.getFontMetrics();
+        g2.drawString(text, cx - fm.stringWidth(text) / 2, cy);
+    }
+
+    private boolean isPressed(int button) {
+        return (controllerState & (1 << button)) != 0;
+    }
+
+    // -------------------------------------------------------------------------
+    // Window helper
+    // -------------------------------------------------------------------------
+
     public static JFrame openWindow(String title, Screen screen) {
         JFrame frame = new JFrame(title);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setResizable(false);
         frame.add(screen);
         frame.pack();
-        frame.setLocationRelativeTo(null); // center on screen
+        frame.setLocationRelativeTo(null);
         frame.setVisible(true);
         return frame;
     }

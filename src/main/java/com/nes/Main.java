@@ -1,23 +1,32 @@
 package com.nes;
 
 import com.nes.memory.Cartridge;
+import com.nes.memory.Controller;
 import com.nes.ppu.PPU;
 import com.nes.ui.Screen;
 
 import javax.swing.*;
+import java.awt.event.KeyAdapter;
+import java.awt.event.KeyEvent;
 
 public class Main {
 
     public static void main(String[] args) {
+
         // ----------------------------------------------------------------
-        // PPU demo setup  (same test pattern used in PPU.main)
+        // Controller
+        // ----------------------------------------------------------------
+        Controller controller1 = new Controller();
+
+        // ----------------------------------------------------------------
+        // PPU + demo pattern
         // ----------------------------------------------------------------
         final int[] chrRam = new int[0x2000];
 
         Cartridge cart = new Cartridge() {
-            @Override public int        ppuRead (int a)       { return chrRam[a & 0x1FFF]; }
-            @Override public void       ppuWrite(int a, int d){ chrRam[a & 0x1FFF] = d & 0xFF; }
-            @Override public MirrorMode getMirrorMode()       { return MirrorMode.VERTICAL; }
+            @Override public int        ppuRead (int a)        { return chrRam[a & 0x1FFF]; }
+            @Override public void       ppuWrite(int a, int d) { chrRam[a & 0x1FFF] = d & 0xFF; }
+            @Override public MirrorMode getMirrorMode()        { return MirrorMode.VERTICAL; }
         };
 
         PPU ppu = new PPU();
@@ -41,7 +50,7 @@ public class Main {
         for (int i = 0; i < tiles.length; i++)
             for (int b = 0; b < 16; b++) chrRam[(i + 1) * 16 + b] = tiles[i][b];
 
-        ppu.writeRegister(1, 0x00); // PPUMASK: rendering off during setup
+        ppu.writeRegister(1, 0x00);       // rendering off during setup
 
         ppu.writeRegister(6, 0x20);
         ppu.writeRegister(6, 0x00);
@@ -63,13 +72,10 @@ public class Main {
         ppu.writeRegister(7, 0x10); // light grey
         ppu.writeRegister(7, 0x00); // dark grey
 
-        ppu.writeRegister(0, 0x00); // PPUCTRL: clears t bits 11-10 after $3F00 writes
+        ppu.writeRegister(0, 0x00); // PPUCTRL: NT0
         ppu.writeRegister(5, 0x00); // PPUSCROLL X = 0
         ppu.writeRegister(5, 0x00); // PPUSCROLL Y = 0
-        ppu.writeRegister(1, 0x08); // PPUMASK: enable background
-
-        // Cycle through red → green → blue (1 second each) to show colorTest
-        ppu.setColorTest(1); // start with red
+        ppu.writeRegister(1, 0x08); // enable background
 
         // Prime the pipeline
         while (!ppu.isFrameComplete()) ppu.tick();
@@ -77,23 +83,48 @@ public class Main {
         while (!ppu.isFrameComplete()) ppu.tick();
 
         // ----------------------------------------------------------------
-        // Show window
+        // Window + keyboard
         // ----------------------------------------------------------------
         SwingUtilities.invokeLater(() -> {
-            Screen screen = new Screen(3);  // 3× → 768×720
-            Screen.openWindow("NES Emulator", screen);
+            Screen screen = new Screen(3);
+            JFrame frame = Screen.openWindow("NES Emulator", screen);
 
-            // Cycle colorTest: 1=red, 2=green, 3=blue, each for ~60 frames (1 second)
-            int[] frameCount = {0};
+            // Keyboard → Controller 1
+            //   Arrow keys → D-Pad
+            //   Z → B,  X → A
+            //   Backspace → Select,  Enter → Start
+            frame.addKeyListener(new KeyAdapter() {
+                @Override public void keyPressed(KeyEvent e)  { handleKey(e, true); }
+                @Override public void keyReleased(KeyEvent e) { handleKey(e, false); }
+
+                private void handleKey(KeyEvent e, boolean pressed) {
+                    int btn = keyToButton(e.getKeyCode());
+                    if (btn >= 0) {
+                        controller1.setButton(btn, pressed);
+                        screen.updateController(controller1.getButtonState());
+                    }
+                }
+
+                private int keyToButton(int key) {
+                    switch (key) {
+                        case KeyEvent.VK_X:     return Controller.BTN_A;
+                        case KeyEvent.VK_Z:     return Controller.BTN_B;
+                        case KeyEvent.VK_Q:     return Controller.BTN_SELECT;
+                        case KeyEvent.VK_W:     return Controller.BTN_START;
+                        case KeyEvent.VK_UP:        return Controller.BTN_UP;
+                        case KeyEvent.VK_DOWN:      return Controller.BTN_DOWN;
+                        case KeyEvent.VK_LEFT:      return Controller.BTN_LEFT;
+                        case KeyEvent.VK_RIGHT:     return Controller.BTN_RIGHT;
+                        default:                    return -1;
+                    }
+                }
+            });
+
+            // 60 FPS game loop
             new Timer(1000 / 60, e -> {
                 ppu.clearFrameComplete();
                 while (!ppu.isFrameComplete()) ppu.tick();
                 screen.updateFrame(ppu.getFrameBuffer());
-
-                if (++frameCount[0] % 60 == 0) {
-                    int next = (ppu.getColorTest() % 3) + 1;
-                    ppu.setColorTest(next);
-                }
             }).start();
         });
     }
