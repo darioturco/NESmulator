@@ -35,6 +35,9 @@ public class Screen extends JPanel {
     // Elapsed time
     private final long startNanos = System.nanoTime();
 
+    // Mute state (reflected from APU via Main)
+    private volatile boolean muted = true;
+
     public Screen(int scale) {
         this.scale    = Math.max(1, scale);
         this.sidebarW = this.scale * 44;   // ~132 px at 3×
@@ -75,6 +78,11 @@ public class Screen extends JPanel {
 
     public void setShowTickCounter(boolean show) {
         showTickCounter = show;
+        repaint();
+    }
+
+    public void setMuted(boolean muted) {
+        this.muted = muted;
         repaint();
     }
 
@@ -128,6 +136,20 @@ public class Screen extends JPanel {
         g2.setColor(LABEL_COLOR);
         g2.setFont(new Font(Font.SANS_SERIF, Font.BOLD, unit));
         drawCentred(g2, "P1", cx, y + unit * 2);
+
+        // ── Mute indicator ─────────────────────────────────────
+        int muteBoxW = w - unit;
+        int muteBoxH = unit + unit / 2;
+        int muteBoxX = x + unit / 2;
+        int muteBoxY = y + unit * 3;
+        Color muteBoxColor  = muted ? new Color(60, 30, 30)       : new Color(30, 60, 30);
+        Color muteLabelColor = muted ? new Color(180, 70,  70)     : new Color(70,  200, 70);
+        String muteLabel    = muted ? "MUTED  (M)" : "SND ON (M)";
+        g2.setColor(muteBoxColor);
+        g2.fillRoundRect(muteBoxX, muteBoxY, muteBoxW, muteBoxH, unit / 3, unit / 3);
+        g2.setColor(muteLabelColor);
+        g2.setFont(new Font(Font.MONOSPACED, Font.BOLD, Math.max(7, unit * 2 / 3)));
+        drawCentred(g2, muteLabel, cx, muteBoxY + muteBoxH * 3 / 4);
 
         // ── D-Pad ──────────────────────────────────────────────
         int dpY = y + h / 4;

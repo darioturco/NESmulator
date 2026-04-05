@@ -38,6 +38,7 @@ public class Main {
         nes.insert(cartridge);
         nes.setControllers(controller1, controller2);
         nes.reset();
+        nes.start();  // open audio output
 
         // ----------------------------------------------------------------
         // Window + keyboard
@@ -51,6 +52,12 @@ public class Main {
                 @Override public void keyReleased(KeyEvent e) { handleKey(e, false); }
 
                 private void handleKey(KeyEvent e, boolean pressed) {
+                    if (pressed && e.getKeyCode() == KeyEvent.VK_M) {
+                        boolean nowMuted = !nes.isMuted();
+                        nes.setMuted(nowMuted);
+                        screen.setMuted(nowMuted);
+                        return;
+                    }
                     int btn = keyToButton(e.getKeyCode());
                     if (btn >= 0) {
                         controller1.setButton(btn, pressed);
@@ -72,6 +79,7 @@ public class Main {
                     }
                 }
             });
+            screen.setMuted(true); // start muted, M to unmute
 
             // 60 FPS game loop on a dedicated thread to avoid blocking the EDT
             Clock clock = new Clock();

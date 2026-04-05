@@ -1,5 +1,6 @@
 package com.nes;
 
+import com.nes.apu.APU;
 import com.nes.cpu.CPU;
 import com.nes.memory.Bus;
 import com.nes.memory.Cartridge;
@@ -16,10 +17,11 @@ import com.nes.ppu.PPU;
  */
 public class NES {
 
-    private final CPU  cpu;
-    private final PPU  ppu;
-    private final Bus  bus;
-    private Cartridge  cartridge;
+    private final CPU cpu;
+    private final PPU ppu;
+    private final Bus bus;
+    private final APU apu;
+    private Cartridge cartridge;
 
     /** Total CPU cycles executed since the last reset. */
     private long masterClock;
@@ -29,7 +31,9 @@ public class NES {
 
     public NES() {
         ppu = new PPU();
+        apu = new APU();
         bus = new Bus(ppu);
+        bus.setAPU(apu);
         cpu = new CPU(bus);
 
         // Wire NMI: PPU fires at VBlank start → CPU receives non-maskable interrupt
@@ -52,9 +56,15 @@ public class NES {
         bus.setControllers(c1, c2);
     }
 
+    /** Open audio output. Call once before the game loop starts. */
+    public void start() {
+        apu.start();
+    }
+
     /** Reset all components to their power-on state. */
     public void reset() {
         ppu.reset();
+        apu.reset();
         cpu.reset();
         masterClock = 0;
         frameCount  = 0;
@@ -72,6 +82,7 @@ public class NES {
         ppu.tick();
         ppu.tick();
         cpu.tick();
+        apu.tick();
         masterClock++;
     }
 
@@ -101,4 +112,7 @@ public class NES {
 
     /** Total frames rendered since the last reset. */
     public long getFrameCount() { return frameCount; }
+
+    public void setMuted(boolean muted) { apu.setMuted(muted); }
+    public boolean isMuted()            { return apu.isMuted(); }
 }

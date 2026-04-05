@@ -1,5 +1,6 @@
 package com.nes.memory;
 
+import com.nes.apu.APU;
 import com.nes.ppu.PPU;
 
 /**
@@ -8,11 +9,11 @@ import com.nes.ppu.PPU;
  * Address map:
  *   $0000–$1FFF  →  Internal RAM (2KB mirrored every $0800)
  *   $2000–$3FFF  →  PPU registers (8 registers mirrored every 8 bytes)
- *   $4000–$4013  →  APU registers  (future)
+ *   $4000–$4013  →  APU channel registers
  *   $4014        →  OAM DMA
- *   $4015        →  APU status     (future)
+ *   $4015        →  APU status
  *   $4016        →  Controller 1 read / strobe write
- *   $4017        →  Controller 2 read / APU frame counter
+ *   $4017        →  Controller 2 read / APU frame counter write
  *   $4020–$FFFF  →  Cartridge (PRG-ROM / PRG-RAM via mapper)
  */
 public class Bus {
@@ -21,12 +22,17 @@ public class Bus {
     private final byte[] ram = new byte[2048];
 
     private final PPU ppu;
+    private APU         apu;
     private Cartridge   cartridge;
     private Controller  controller1;
     private Controller  controller2;
 
     public Bus(PPU ppu) {
         this.ppu = ppu;
+    }
+
+    public void setAPU(APU apu) {
+        this.apu = apu;
     }
 
     public void setCartridge(Cartridge cartridge) {
@@ -51,6 +57,9 @@ public class Bus {
         }
         if (addr < 0x4000) {
             return ppu.readRegister(addr & 0x07);
+        }
+        if (addr == 0x4015) {
+            return apu != null ? apu.readStatus() : 0;
         }
         if (addr == 0x4016) {
             return controller1 != null ? controller1.read() : 0;
@@ -77,6 +86,10 @@ public class Bus {
             ppu.writeRegister(addr & 0x07, data);
             return;
         }
+        if (addr >= 0x4000 && addr <= 0x4013) {
+            if (apu != null) apu.write(addr, data);
+            return;
+        }
         if (addr == 0x4014) {
             // OAM DMA: copy 256 bytes from CPU page into PPU OAM
             byte[] page = new byte[256];
@@ -85,9 +98,17 @@ public class Bus {
             ppu.writeDma(page);
             return;
         }
+        if (addr == 0x4015) {
+            if (apu != null) apu.write(addr, data);
+            return;
+        }
         if (addr == 0x4016) {
             if (controller1 != null) controller1.write(data);
             if (controller2 != null) controller2.write(data);
+            return;
+        }
+        if (addr == 0x4017) {
+            if (apu != null) apu.write(addr, data);
             return;
         }
         if (addr >= 0x4020 && cartridge != null) {
