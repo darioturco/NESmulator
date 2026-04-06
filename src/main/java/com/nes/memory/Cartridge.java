@@ -1,8 +1,13 @@
 package com.nes.memory;
 
 import com.nes.memory.mapper.Mapper;
+import com.nes.memory.mapper.MapperAxROM;
+import com.nes.memory.mapper.MapperCNROM;
 import com.nes.memory.mapper.MapperMMC1;
+import com.nes.memory.mapper.MapperMMC2;
+import com.nes.memory.mapper.MapperMMC3;
 import com.nes.memory.mapper.MapperNROM;
+import com.nes.memory.mapper.MapperUxROM;
 
 import java.io.IOException;
 import java.nio.file.Files;
@@ -101,6 +106,11 @@ public class Cartridge {
         switch (id) {
             case 0: return new MapperNROM(prgRom, chrRom, battery);
             case 1: return new MapperMMC1(prgRom, chrRom, battery);
+            case 2: return new MapperUxROM(prgRom, chrRom, battery);
+            case 3: return new MapperCNROM(prgRom, chrRom, battery);
+            case 4: return new MapperMMC3(prgRom, chrRom, battery);
+            case 7: return new MapperAxROM(prgRom, chrRom, battery);
+            case 9: return new MapperMMC2(prgRom, chrRom, battery);
             default:
                 throw new IllegalArgumentException("Unsupported mapper: " + id);
         }
@@ -135,11 +145,23 @@ public class Cartridge {
     // -------------------------------------------------------------------------
 
     public MirrorMode getMirrorMode() {
-        // Mappers with dynamic mirroring (e.g. MMC1) override the iNES header value
-        if (mapper instanceof MapperMMC1) {
-            return ((MapperMMC1) mapper).getMirrorMode();
-        }
+        // Mappers with dynamic mirroring override the iNES header value
+        if (mapper instanceof MapperMMC1) return ((MapperMMC1) mapper).getMirrorMode();
+        if (mapper instanceof MapperMMC2) return ((MapperMMC2) mapper).getMirrorMode();
+        if (mapper instanceof MapperMMC3) return ((MapperMMC3) mapper).getMirrorMode();
+        if (mapper instanceof MapperAxROM) return ((MapperAxROM) mapper).getMirrorMode();
         return mirrorMode;
     }
-    public int        getMapperId()   { return mapperId; }
+
+    /** Forward to the mapper's scanline IRQ counter (MMC3 and similar). */
+    public void tickScanline() {
+        if (mapper != null) mapper.tickScanline();
+    }
+
+    /** True when the mapper has raised an IRQ the CPU must service. */
+    public boolean irqPending() {
+        return mapper != null && mapper.irqPending();
+    }
+
+    public int getMapperId() { return mapperId; }
 }

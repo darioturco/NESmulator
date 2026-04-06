@@ -49,4 +49,18 @@ public interface Mapper {
      * @param data byte value [0, 255]
      */
     void ppuWrite(int addr, int data);
+
+    /**
+     * Called by the PPU at the start of HBlank for each visible scanline
+     * (scanlines 0–239) and the pre-render scanline (261).
+     * Mappers that use scanline-based IRQs (e.g. MMC3) override this.
+     */
+    default void tickScanline() {}
+
+    /**
+     * Returns true when the mapper has a pending IRQ that the CPU should
+     * service. The IRQ is automatically cleared when the CPU acknowledges
+     * it via the IRQ vector, but mappers may also expose a write to clear it.
+     */
+    default boolean irqPending() { return false; }
 }

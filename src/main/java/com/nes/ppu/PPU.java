@@ -132,10 +132,11 @@ public class PPU {
     private boolean sprite0Loaded;
 
     // -------------------------------------------------------------------------
-    // NMI callback
+    // NMI callback / cartridge (for scanline IRQ)
     // -------------------------------------------------------------------------
 
-    private Runnable nmiCallback;
+    private Runnable  nmiCallback;
+    private Cartridge cartridge;
 
     // =========================================================================
     // Lifecycle
@@ -162,6 +163,7 @@ public class PPU {
     }
 
     public void setCartridge(Cartridge cartridge) {
+        this.cartridge = cartridge;
         ppuBus.setCartridge(cartridge);
     }
 
@@ -230,6 +232,14 @@ public class PPU {
 
             // Pre-render: restore vertical scroll from t
             if (scanline == 261 && rendering && cycle >= 280 && cycle <= 304) copyY();
+        }
+
+        // -----------------------------------------------------------------
+        // Scanline IRQ (MMC3 and similar): tick at cycle 260 of visible
+        // scanlines and the pre-render scanline.
+        // -----------------------------------------------------------------
+        if (cycle == 260 && (scanline < 240 || scanline == 261) && cartridge != null) {
+            cartridge.tickScanline();
         }
 
         // -----------------------------------------------------------------

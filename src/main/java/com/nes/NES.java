@@ -83,6 +83,10 @@ public class NES {
         ppu.tick();
         cpu.tick();
         apu.tick();
+        // Mapper IRQ (e.g. MMC3 scanline counter) → CPU IRQ line
+        if (cartridge != null && cartridge.irqPending()) {
+            cpu.irq();
+        }
         masterClock++;
     }
 
