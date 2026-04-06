@@ -130,4 +130,36 @@ public class MapperMMC2 implements Mapper {
     public MirrorMode getMirrorMode() {
         return mirrorMode;
     }
+
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    @Override
+    public MapperState saveState() {
+        return new State(prgBank, r0fd, r0fe, r1fd, r1fe,
+                         latch0fe, latch1fe, mirrorMode);
+    }
+
+    @Override
+    public void loadState(MapperState ms) {
+        State s = (State) ms;
+        prgBank = s.prgBank;
+        r0fd = s.r0fd; r0fe = s.r0fe; r1fd = s.r1fd; r1fe = s.r1fe;
+        latch0fe = s.latch0fe; latch1fe = s.latch1fe;
+        mirrorMode = s.mirrorMode;
+    }
+
+    private static final class State implements MapperState {
+        private static final long serialVersionUID = 1L;
+        final int prgBank, r0fd, r0fe, r1fd, r1fe;
+        final boolean latch0fe, latch1fe;
+        final MirrorMode mirrorMode;
+        State(int prgBank, int r0fd, int r0fe, int r1fd, int r1fe,
+              boolean latch0fe, boolean latch1fe, MirrorMode mirrorMode) {
+            this.prgBank = prgBank; this.r0fd = r0fd; this.r0fe = r0fe;
+            this.r1fd = r1fd; this.r1fe = r1fe;
+            this.latch0fe = latch0fe; this.latch1fe = latch1fe; this.mirrorMode = mirrorMode;
+        }
+    }
 }

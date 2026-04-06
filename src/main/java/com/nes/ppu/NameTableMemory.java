@@ -59,6 +59,20 @@ public class NameTableMemory {
     }
 
     // -------------------------------------------------------------------------
+    // Save state
+    // -------------------------------------------------------------------------
+
+    public int[][] captureBanks() {
+        int[][] copy = new int[2][0x400];
+        for (int i = 0; i < 2; i++) System.arraycopy(banks[i], 0, copy[i], 0, 0x400);
+        return copy;
+    }
+
+    public void restoreBanks(int[][] saved) {
+        for (int i = 0; i < 2; i++) System.arraycopy(saved[i], 0, banks[i], 0, 0x400);
+    }
+
+    // -------------------------------------------------------------------------
     // Internal helpers
     // -------------------------------------------------------------------------
 

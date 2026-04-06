@@ -3,6 +3,8 @@ package com.nes.memory;
 import com.nes.memory.mapper.Mapper;
 import com.nes.memory.mapper.MapperAxROM;
 import com.nes.memory.mapper.MapperCNROM;
+import com.nes.memory.mapper.MapperColorDreams;
+import com.nes.memory.mapper.MapperGxROM;
 import com.nes.memory.mapper.MapperMMC1;
 import com.nes.memory.mapper.MapperMMC2;
 import com.nes.memory.mapper.MapperMMC3;
@@ -109,8 +111,10 @@ public class Cartridge {
             case 2: return new MapperUxROM(prgRom, chrRom, battery);
             case 3: return new MapperCNROM(prgRom, chrRom, battery);
             case 4: return new MapperMMC3(prgRom, chrRom, battery);
-            case 7: return new MapperAxROM(prgRom, chrRom, battery);
-            case 9: return new MapperMMC2(prgRom, chrRom, battery);
+            case  7: return new MapperAxROM(prgRom, chrRom, battery);
+            case  9: return new MapperMMC2(prgRom, chrRom, battery);
+            case 11: return new MapperColorDreams(prgRom, chrRom, battery);
+            case 66: return new MapperGxROM(prgRom, chrRom, battery);
             default:
                 throw new IllegalArgumentException("Unsupported mapper: " + id);
         }
@@ -164,4 +168,16 @@ public class Cartridge {
     }
 
     public int getMapperId() { return mapperId; }
+
+    // -------------------------------------------------------------------------
+    // Save state
+    // -------------------------------------------------------------------------
+
+    public Mapper.MapperState captureMapperState() {
+        return mapper != null ? mapper.saveState() : null;
+    }
+
+    public void restoreMapperState(Mapper.MapperState state) {
+        if (mapper != null && state != null) mapper.loadState(state);
+    }
 }

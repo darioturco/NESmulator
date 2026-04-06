@@ -162,6 +162,48 @@ public class PPU {
         frameComplete = false;
     }
 
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    public com.nes.SaveState.PpuState captureState() {
+        int[][] ntBanks = ppuBus.captureNametableBanks();
+        int[]   palRam  = ppuBus.capturePaletteRam();
+        return new com.nes.SaveState.PpuState(
+            scanline, cycle,
+            v, t, x, w,
+            colorTest, ctrl, mask, status, oamAddr, dataBuffer,
+            bgShiftPatLo, bgShiftPatHi, bgShiftAttrLo, bgShiftAttrHi,
+            bgNextTileId, bgNextTileAttr, bgNextTileLo, bgNextTileHi,
+            oam.clone(),
+            sprY.clone(), sprTile.clone(), sprAttr.clone(), sprX.clone(),
+            sprPatLo.clone(), sprPatHi.clone(),
+            sprCount, sprite0Loaded, frameComplete,
+            ntBanks, palRam
+        );
+    }
+
+    public void restoreState(com.nes.SaveState.PpuState s) {
+        scanline = s.scanline; cycle = s.cycle;
+        v = s.v; t = s.t; x = s.fineX; w = s.w;
+        colorTest = s.colorTest; ctrl = s.ctrl; mask = s.mask;
+        status = s.status; oamAddr = s.oamAddr; dataBuffer = s.dataBuffer;
+        bgShiftPatLo  = s.bgShiftPatLo;  bgShiftPatHi  = s.bgShiftPatHi;
+        bgShiftAttrLo = s.bgShiftAttrLo; bgShiftAttrHi = s.bgShiftAttrHi;
+        bgNextTileId  = s.bgNextTileId;  bgNextTileAttr = s.bgNextTileAttr;
+        bgNextTileLo  = s.bgNextTileLo;  bgNextTileHi   = s.bgNextTileHi;
+        System.arraycopy(s.oam, 0, oam, 0, oam.length);
+        System.arraycopy(s.sprY,     0, sprY,     0, 8);
+        System.arraycopy(s.sprTile,  0, sprTile,  0, 8);
+        System.arraycopy(s.sprAttr,  0, sprAttr,  0, 8);
+        System.arraycopy(s.sprX,     0, sprX,     0, 8);
+        System.arraycopy(s.sprPatLo, 0, sprPatLo, 0, 8);
+        System.arraycopy(s.sprPatHi, 0, sprPatHi, 0, 8);
+        sprCount = s.sprCount; sprite0Loaded = s.sprite0Loaded; frameComplete = s.frameComplete;
+        ppuBus.restoreNametableBanks(s.nametableBanks);
+        ppuBus.restorePaletteRam(s.paletteRam);
+    }
+
     public void setCartridge(Cartridge cartridge) {
         this.cartridge = cartridge;
         ppuBus.setCartridge(cartridge);

@@ -250,4 +250,50 @@ public class MapperMMC3 implements Mapper {
 
         return (bank % chrBank1Count) * 0x400 + (addr & 0x3FF);
     }
+
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    @Override
+    public MapperState saveState() {
+        return new State(reg.clone(), bankSelect, mirrorMode,
+                         prgRamEnabled, prgRamWriteProtect,
+                         irqLatch, irqCounter, irqReload, irqEnabled, irqPending,
+                         prgRam.clone(),
+                         hasChrRam ? chrMem.clone() : null);
+    }
+
+    @Override
+    public void loadState(MapperState ms) {
+        State s = (State) ms;
+        System.arraycopy(s.reg, 0, reg, 0, reg.length);
+        bankSelect = s.bankSelect; mirrorMode = s.mirrorMode;
+        prgRamEnabled = s.prgRamEnabled; prgRamWriteProtect = s.prgRamWriteProtect;
+        irqLatch = s.irqLatch; irqCounter = s.irqCounter;
+        irqReload = s.irqReload; irqEnabled = s.irqEnabled; irqPending = s.irqPending;
+        System.arraycopy(s.prgRam, 0, prgRam, 0, prgRam.length);
+        if (s.chrMem != null && hasChrRam)
+            System.arraycopy(s.chrMem, 0, chrMem, 0, chrMem.length);
+    }
+
+    private static final class State implements MapperState {
+        private static final long serialVersionUID = 1L;
+        final int[] reg;
+        final int bankSelect, irqLatch, irqCounter;
+        final MirrorMode mirrorMode;
+        final boolean prgRamEnabled, prgRamWriteProtect;
+        final boolean irqReload, irqEnabled, irqPending;
+        final byte[] prgRam, chrMem;
+        State(int[] reg, int bankSelect, MirrorMode mirrorMode,
+              boolean prgRamEnabled, boolean prgRamWriteProtect,
+              int irqLatch, int irqCounter, boolean irqReload, boolean irqEnabled, boolean irqPending,
+              byte[] prgRam, byte[] chrMem) {
+            this.reg = reg; this.bankSelect = bankSelect; this.mirrorMode = mirrorMode;
+            this.prgRamEnabled = prgRamEnabled; this.prgRamWriteProtect = prgRamWriteProtect;
+            this.irqLatch = irqLatch; this.irqCounter = irqCounter;
+            this.irqReload = irqReload; this.irqEnabled = irqEnabled; this.irqPending = irqPending;
+            this.prgRam = prgRam; this.chrMem = chrMem;
+        }
+    }
 }

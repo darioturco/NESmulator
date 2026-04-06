@@ -119,4 +119,33 @@ public class NES {
 
     public void setMuted(boolean muted) { apu.setMuted(muted); }
     public boolean isMuted()            { return apu.isMuted(); }
+
+    // -------------------------------------------------------------------------
+    // Save state
+    // -------------------------------------------------------------------------
+
+    /** Capture a complete snapshot of the current emulator state. */
+    public SaveState captureState() {
+        return new SaveState(
+            cpu.captureState(),
+            bus.captureState(),
+            ppu.captureState(),
+            apu.captureState(),
+            cartridge != null ? cartridge.captureMapperState() : null,
+            masterClock,
+            frameCount
+        );
+    }
+
+    /** Restore the emulator to a previously captured state. */
+    public void restoreState(SaveState state) {
+        cpu.restoreState(state.cpu);
+        bus.restoreState(state.bus);
+        ppu.restoreState(state.ppu);
+        apu.restoreState(state.apu);
+        if (state.mapper != null && cartridge != null)
+            cartridge.restoreMapperState(state.mapper);
+        masterClock = state.masterClock;
+        frameCount  = state.frameCount;
+    }
 }

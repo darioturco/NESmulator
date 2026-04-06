@@ -116,6 +116,18 @@ public class Bus {
         }
     }
 
+    // -------------------------------------------------------------------------
+    // Save state
+    // -------------------------------------------------------------------------
+
+    public com.nes.SaveState.BusState captureState() {
+        return new com.nes.SaveState.BusState(ram.clone());
+    }
+
+    public void restoreState(com.nes.SaveState.BusState s) {
+        System.arraycopy(s.ram, 0, ram, 0, ram.length);
+    }
+
     /** Read a 16-bit little-endian word. */
     public int readWord(int addr) {
         return read(addr) | (read(addr + 1) << 8);

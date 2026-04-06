@@ -79,4 +79,31 @@ public class MapperAxROM implements Mapper {
     public MirrorMode getMirrorMode() {
         return mirrorMode;
     }
+
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    @Override
+    public MapperState saveState() {
+        return new State(selectedBank, mirrorMode, chrRam.clone());
+    }
+
+    @Override
+    public void loadState(MapperState ms) {
+        State s = (State) ms;
+        selectedBank = s.selectedBank;
+        mirrorMode   = s.mirrorMode;
+        System.arraycopy(s.chrRam, 0, chrRam, 0, chrRam.length);
+    }
+
+    private static final class State implements MapperState {
+        private static final long serialVersionUID = 1L;
+        final int selectedBank;
+        final MirrorMode mirrorMode;
+        final byte[] chrRam;
+        State(int selectedBank, MirrorMode mirrorMode, byte[] chrRam) {
+            this.selectedBank = selectedBank; this.mirrorMode = mirrorMode; this.chrRam = chrRam;
+        }
+    }
 }

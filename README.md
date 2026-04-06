@@ -61,13 +61,15 @@ src/main/java/com/nes/
     ├── Controller.java     8-button gamepad, mapped at $4016/$4017
     └── mapper/
         ├── Mapper.java         Common interface (cpuRead/Write, ppuRead/Write, scanline IRQ)
-        ├── MapperNROM.java     Mapper 0 — no bank switching
-        ├── MapperMMC1.java     Mapper 1 — serial shift register, dynamic mirroring, PRG-RAM
-        ├── MapperUxROM.java    Mapper 2 — single PRG bank register, fixed last bank
-        ├── MapperCNROM.java    Mapper 3 — CHR bank switching, fixed PRG
-        ├── MapperMMC3.java     Mapper 4 — 8-way PRG/CHR banking, scanline IRQ, PRG-RAM
-        ├── MapperAxROM.java    Mapper 7 — 32 KB PRG bank switch + single-screen mirroring
-        └── MapperMMC2.java     Mapper 9 — CHR latch mechanism, fixed last-3 PRG banks
+        ├── MapperNROM.java         Mapper  0 — no bank switching
+        ├── MapperMMC1.java         Mapper  1 — serial shift register, dynamic mirroring, PRG-RAM
+        ├── MapperUxROM.java        Mapper  2 — single PRG bank register, fixed last bank
+        ├── MapperCNROM.java        Mapper  3 — CHR bank switching, fixed PRG
+        ├── MapperMMC3.java         Mapper  4 — 8-way PRG/CHR banking, scanline IRQ, PRG-RAM
+        ├── MapperAxROM.java        Mapper  7 — 32 KB PRG bank switch + single-screen mirroring
+        ├── MapperMMC2.java         Mapper  9 — CHR latch mechanism, fixed last-3 PRG banks
+        ├── MapperColorDreams.java  Mapper 11 — combined PRG (bits 3-0) + CHR (bits 7-4) register
+        └── MapperGxROM.java        Mapper 66 — combined PRG (bits 5-4) + CHR (bits 1-0) register
 ```
 
 ## Building & Running
@@ -82,14 +84,18 @@ mvn test
 
 **Controls:**
 
-| NES Button | Keyboard (P1) | Keyboard (P2) |
-|------------|---------------|---------------|
-| D-Pad      | Arrow keys    | WASD          |
-| A          | Z             | J             |
-| B          | X             | K             |
-| Start      | Enter         | T             |
-| Select     | Right Shift   | Y             |
-| Mute       | M             | —             |
+| NES Button  | Keyboard (P1) | Keyboard (P2) |
+|-------------|---------------|---------------|
+| D-Pad       | Arrow keys    | WASD          |
+| A           | Z             | J             |
+| B           | X             | K             |
+| Start       | Enter         | T             |
+| Select      | Right Shift   | Y             |
+| Mute        | M             | —             |
+| Save state  | F5            | —             |
+| Load state  | F8            | —             |
+
+Save states are written to `save_states/<rom-name>_1.sav`.
 
 ## Supported Mappers
 
@@ -100,8 +106,10 @@ mvn test
 | 2 | UxROM  | Contra, Castlevania, Mega Man, Duck Tales                | Implemented |
 | 3 | CNROM  | Paperboy, Gradius, Solomon's Key, Arkanoid               | Implemented |
 | 4 | MMC3   | Super Mario Bros. 2/3, Kirby's Adventure, Mega Man 3–6  | Implemented |
-| 7 | AxROM  | Battletoads, Wizards & Warriors, Cobra Triangle          | Implemented |
-| 9 | MMC2   | Mike Tyson's Punch-Out!!, Punch-Out!!                    | Implemented |
+|  7 | AxROM         | Battletoads, Wizards & Warriors, Cobra Triangle          | Implemented |
+|  9 | MMC2          | Mike Tyson's Punch-Out!!, Punch-Out!!                    | Implemented |
+| 11 | Color Dreams  | Spiritual Warfare, Bible Adventures, Exodus              | Implemented |
+| 66 | GxROM         | Super Mario Bros. + Duck Hunt, Donkey Kong Classics      | Implemented |
 
 ## APU Channels
 
@@ -117,10 +125,6 @@ Audio starts muted. Press **M** to toggle.
 
 ## To-Do
 
-### Mappers
-- [ ] **Mapper 11 (Color Dreams)** — combined PRG+CHR register; Wisdom Tree games
-- [ ] **Mapper 66 (GxROM)** — combined PRG+CHR bank select; Super Mario Bros. + Duck Hunt
-
 ### Emulation Accuracy
 - [ ] **Sprite 0 hit** — pixel-accurate collision detection between sprite 0 and background
 - [ ] **Open bus behaviour** — reads from unmapped addresses should return last bus value
@@ -128,7 +132,6 @@ Audio starts muted. Press **M** to toggle.
 - [ ] **MMC3 IRQ timing** — replace scanline approximation with cycle-accurate PPU A12 edge detection
 
 ### Features
-- [ ] **Save states** — serialize and restore full emulator state to/from file
 - [ ] **Debug tools** — memory viewer, CPU step-by-step execution, breakpoints
 - [ ] **ROM browser** — file picker dialog on startup instead of command-line argument
 - [ ] **Rewind** — ring buffer of recent states for a few seconds of rewind

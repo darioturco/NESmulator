@@ -84,6 +84,15 @@ public class PPUBus {
         return paletteMemory.toArgb(paletteIndex);
     }
 
+    // -------------------------------------------------------------------------
+    // Save state helpers (delegated to sub-memories)
+    // -------------------------------------------------------------------------
+
+    public int[][] captureNametableBanks()            { return nameTableMemory.captureBanks(); }
+    public void    restoreNametableBanks(int[][] b)   { nameTableMemory.restoreBanks(b); }
+    public int[]   capturePaletteRam()                { return paletteMemory.captureRam(); }
+    public void    restorePaletteRam(int[] r)         { paletteMemory.restoreRam(r); }
+
     /** Reset internal state (nametable VRAM and palette RAM). */
     public void reset() {
         nameTableMemory.reset();

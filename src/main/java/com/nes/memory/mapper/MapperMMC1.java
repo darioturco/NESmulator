@@ -230,4 +230,45 @@ public class MapperMMC1 implements Mapper {
             case 3: mirrorMode = MirrorMode.HORIZONTAL;       break;
         }
     }
+
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    @Override
+    public MapperState saveState() {
+        return new State(shiftReg, writeCount,
+                         regControl, regChrBank0, regChrBank1, regPrgBank,
+                         mirrorMode,
+                         prgRam.clone(),
+                         hasChrRam ? chrMem.clone() : null);
+    }
+
+    @Override
+    public void loadState(MapperState ms) {
+        State s = (State) ms;
+        shiftReg   = s.shiftReg;   writeCount = s.writeCount;
+        regControl = s.regControl; regChrBank0 = s.regChrBank0;
+        regChrBank1 = s.regChrBank1; regPrgBank = s.regPrgBank;
+        mirrorMode = s.mirrorMode;
+        System.arraycopy(s.prgRam, 0, prgRam, 0, prgRam.length);
+        if (s.chrMem != null && hasChrRam)
+            System.arraycopy(s.chrMem, 0, chrMem, 0, chrMem.length);
+    }
+
+    private static final class State implements MapperState {
+        private static final long serialVersionUID = 1L;
+        final int shiftReg, writeCount;
+        final int regControl, regChrBank0, regChrBank1, regPrgBank;
+        final MirrorMode mirrorMode;
+        final byte[] prgRam, chrMem;
+        State(int shiftReg, int writeCount,
+              int regControl, int regChrBank0, int regChrBank1, int regPrgBank,
+              MirrorMode mirrorMode, byte[] prgRam, byte[] chrMem) {
+            this.shiftReg = shiftReg; this.writeCount = writeCount;
+            this.regControl = regControl; this.regChrBank0 = regChrBank0;
+            this.regChrBank1 = regChrBank1; this.regPrgBank = regPrgBank;
+            this.mirrorMode = mirrorMode; this.prgRam = prgRam; this.chrMem = chrMem;
+        }
+    }
 }

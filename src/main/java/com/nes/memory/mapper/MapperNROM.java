@@ -77,4 +77,31 @@ public class MapperNROM implements Mapper {
             chrMem[addr & 0x1FFF] = (byte) data;
         }
     }
+
+    // =========================================================================
+    // Save state
+    // =========================================================================
+
+    @Override
+    public MapperState saveState() {
+        return new State(
+            hasChrRam ? chrMem.clone() : null,
+            prgRam != null ? prgRam.clone() : null
+        );
+    }
+
+    @Override
+    public void loadState(MapperState ms) {
+        State s = (State) ms;
+        if (s.chrMem != null && hasChrRam)
+            System.arraycopy(s.chrMem, 0, chrMem, 0, chrMem.length);
+        if (s.prgRam != null && prgRam != null)
+            System.arraycopy(s.prgRam, 0, prgRam, 0, prgRam.length);
+    }
+
+    private static final class State implements MapperState {
+        private static final long serialVersionUID = 1L;
+        final byte[] chrMem, prgRam;
+        State(byte[] chrMem, byte[] prgRam) { this.chrMem = chrMem; this.prgRam = prgRam; }
+    }
 }

@@ -4,11 +4,11 @@ import com.nes.clock.Clock;
 import com.nes.memory.Cartridge;
 import com.nes.memory.Controller;
 import com.nes.ui.Screen;
+import java.io.IOException;
 
 import javax.swing.*;
 import java.awt.event.KeyAdapter;
 import java.awt.event.KeyEvent;
-import java.io.IOException;
 
 public class Main {
 
@@ -52,6 +52,15 @@ public class Main {
                 @Override public void keyReleased(KeyEvent e) { handleKey(e, false); }
 
                 private void handleKey(KeyEvent e, boolean pressed) {
+                    if (pressed && e.getKeyCode() == KeyEvent.VK_F5) {
+                        SaveStateManager.save(nes.captureState(), romPath, 1);
+                        return;
+                    }
+                    if (pressed && e.getKeyCode() == KeyEvent.VK_F8) {
+                        SaveState loaded = SaveStateManager.load(romPath, 1);
+                        if (loaded != null) nes.restoreState(loaded);
+                        return;
+                    }
                     if (pressed && e.getKeyCode() == KeyEvent.VK_M) {
                         boolean nowMuted = !nes.isMuted();
                         nes.setMuted(nowMuted);

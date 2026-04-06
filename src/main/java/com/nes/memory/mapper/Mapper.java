@@ -1,5 +1,7 @@
 package com.nes.memory.mapper;
 
+import java.io.Serializable;
+
 /**
  * Common interface for all NES memory mappers.
  *
@@ -17,6 +19,15 @@ package com.nes.memory.mapper;
  *   $1000–$1FFF  Pattern Table 1
  */
 public interface Mapper {
+
+    /** Marker interface for serializable mapper state snapshots. */
+    interface MapperState extends Serializable {}
+
+    /** Returns a snapshot of this mapper's mutable state. */
+    default MapperState saveState() { return null; }
+
+    /** Restores this mapper's mutable state from a snapshot. */
+    default void loadState(MapperState state) {}
 
     /**
      * CPU read from cartridge space.

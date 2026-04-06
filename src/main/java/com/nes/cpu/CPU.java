@@ -102,6 +102,19 @@ public class CPU {
     // -------------------------------------------------------------------------
     // Clock
     // -------------------------------------------------------------------------
+    // Save state
+    // -------------------------------------------------------------------------
+
+    public com.nes.SaveState.CpuState captureState() {
+        return new com.nes.SaveState.CpuState(a, x, y, sp, pc, p, cycles, pageCrossed);
+    }
+
+    public void restoreState(com.nes.SaveState.CpuState s) {
+        a = s.a; x = s.x; y = s.y; sp = s.sp; pc = s.pc; p = s.p;
+        cycles = s.cycles; pageCrossed = s.pageCrossed;
+    }
+
+    // -------------------------------------------------------------------------
 
     /**
      * Advance the CPU by one clock cycle.

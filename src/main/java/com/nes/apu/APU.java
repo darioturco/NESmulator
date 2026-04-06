@@ -616,6 +616,69 @@ public class APU {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Save state
+    // ─────────────────────────────────────────────────────────────────────────
+
+    public com.nes.SaveState.ApuState captureState() {
+        return new com.nes.SaveState.ApuState(
+            pulseEnabled.clone(), pulseEnvLoop.clone(), pulseEnvConst.clone(), pulseLenHalt.clone(),
+            pulseLenCtr.clone(), pulseDuty.clone(), pulseSeqPos.clone(), pulseTimer.clone(), pulsePeriod.clone(),
+            pulseEnvelope.clone(), pulseEnvPeriod.clone(), pulseEnvTimer.clone(),
+            sweepEnabled.clone(), sweepNegate.clone(), sweepReload.clone(),
+            sweepPeriod.clone(), sweepShift.clone(), sweepTimer.clone(),
+            triEnabled, triLinearReloadFlag, triLenHalt,
+            triLenCtr, triLinearCtr, triLinearReload, triTimer, triPeriod, triSeqPos,
+            noiseEnabled, noiseLenHalt, noiseEnvLoop, noiseEnvConst, noiseMode,
+            noiseLenCtr, noiseEnvelope, noiseEnvPeriod, noiseEnvTimer,
+            noiseShiftReg, noiseTimer, noisePeriod,
+            dmcIrqEnabled, dmcLoop, dmcSilence, dmcIrq,
+            dmcPeriod, dmcTimer, dmcOutputLevel, dmcSampleAddr, dmcSampleLength,
+            dmcCurrentAddr, dmcBytesRemaining, dmcSampleBuffer, dmcShiftReg, dmcBitsRemaining,
+            frameMode, frameCycles, frameIrqInhibit, frameIrq,
+            apuCycle
+        );
+    }
+
+    public void restoreState(com.nes.SaveState.ApuState s) {
+        System.arraycopy(s.pulseEnabled,   0, pulseEnabled,   0, 2);
+        System.arraycopy(s.pulseEnvLoop,   0, pulseEnvLoop,   0, 2);
+        System.arraycopy(s.pulseEnvConst,  0, pulseEnvConst,  0, 2);
+        System.arraycopy(s.pulseLenHalt,   0, pulseLenHalt,   0, 2);
+        System.arraycopy(s.pulseLenCtr,    0, pulseLenCtr,    0, 2);
+        System.arraycopy(s.pulseDuty,      0, pulseDuty,      0, 2);
+        System.arraycopy(s.pulseSeqPos,    0, pulseSeqPos,    0, 2);
+        System.arraycopy(s.pulseTimer,     0, pulseTimer,     0, 2);
+        System.arraycopy(s.pulsePeriod,    0, pulsePeriod,    0, 2);
+        System.arraycopy(s.pulseEnvelope,  0, pulseEnvelope,  0, 2);
+        System.arraycopy(s.pulseEnvPeriod, 0, pulseEnvPeriod, 0, 2);
+        System.arraycopy(s.pulseEnvTimer,  0, pulseEnvTimer,  0, 2);
+        System.arraycopy(s.sweepEnabled,   0, sweepEnabled,   0, 2);
+        System.arraycopy(s.sweepNegate,    0, sweepNegate,    0, 2);
+        System.arraycopy(s.sweepReload,    0, sweepReload,    0, 2);
+        System.arraycopy(s.sweepPeriod,    0, sweepPeriod,    0, 2);
+        System.arraycopy(s.sweepShift,     0, sweepShift,     0, 2);
+        System.arraycopy(s.sweepTimer,     0, sweepTimer,     0, 2);
+        triEnabled = s.triEnabled; triLinearReloadFlag = s.triLinearReloadFlag; triLenHalt = s.triLenHalt;
+        triLenCtr = s.triLenCtr; triLinearCtr = s.triLinearCtr; triLinearReload = s.triLinearReload;
+        triTimer = s.triTimer; triPeriod = s.triPeriod; triSeqPos = s.triSeqPos;
+        noiseEnabled = s.noiseEnabled; noiseLenHalt = s.noiseLenHalt;
+        noiseEnvLoop = s.noiseEnvLoop; noiseEnvConst = s.noiseEnvConst; noiseMode = s.noiseMode;
+        noiseLenCtr = s.noiseLenCtr; noiseEnvelope = s.noiseEnvelope;
+        noiseEnvPeriod = s.noiseEnvPeriod; noiseEnvTimer = s.noiseEnvTimer;
+        noiseShiftReg = s.noiseShiftReg; noiseTimer = s.noiseTimer; noisePeriod = s.noisePeriod;
+        dmcIrqEnabled = s.dmcIrqEnabled; dmcLoop = s.dmcLoop;
+        dmcSilence = s.dmcSilence; dmcIrq = s.dmcIrq;
+        dmcPeriod = s.dmcPeriod; dmcTimer = s.dmcTimer; dmcOutputLevel = s.dmcOutputLevel;
+        dmcSampleAddr = s.dmcSampleAddr; dmcSampleLength = s.dmcSampleLength;
+        dmcCurrentAddr = s.dmcCurrentAddr; dmcBytesRemaining = s.dmcBytesRemaining;
+        dmcSampleBuffer = s.dmcSampleBuffer; dmcShiftReg = s.dmcShiftReg; dmcBitsRemaining = s.dmcBitsRemaining;
+        frameMode = s.frameMode; frameCycles = s.frameCycles;
+        frameIrqInhibit = s.frameIrqInhibit; frameIrq = s.frameIrq;
+        apuCycle = s.apuCycle;
+        sampleAccum = 0.0; // reset accumulator so audio resumes cleanly
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Mute
     // ─────────────────────────────────────────────────────────────────────────
 
