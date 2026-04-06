@@ -1,6 +1,7 @@
 package com.nes.memory;
 
 import com.nes.memory.mapper.Mapper;
+import com.nes.memory.mapper.MapperMMC1;
 import com.nes.memory.mapper.MapperNROM;
 
 import java.io.IOException;
@@ -99,6 +100,7 @@ public class Cartridge {
     private static Mapper createMapper(int id, byte[] prgRom, byte[] chrRom, boolean battery) {
         switch (id) {
             case 0: return new MapperNROM(prgRom, chrRom, battery);
+            case 1: return new MapperMMC1(prgRom, chrRom, battery);
             default:
                 throw new IllegalArgumentException("Unsupported mapper: " + id);
         }
@@ -132,6 +134,12 @@ public class Cartridge {
     // Getters
     // -------------------------------------------------------------------------
 
-    public MirrorMode getMirrorMode() { return mirrorMode; }
+    public MirrorMode getMirrorMode() {
+        // Mappers with dynamic mirroring (e.g. MMC1) override the iNES header value
+        if (mapper instanceof MapperMMC1) {
+            return ((MapperMMC1) mapper).getMirrorMode();
+        }
+        return mirrorMode;
+    }
     public int        getMapperId()   { return mapperId; }
 }
